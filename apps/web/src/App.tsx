@@ -56,6 +56,15 @@ type CameraPreset = {
   pitchDeg?: number;
 };
 
+type ViewBounds = {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+  crossesAntimeridian: boolean;
+  bbox: string | null;
+};
+
 const defaultLayers: LayerState = {
   aircraft: true,
   vessels: true,
@@ -78,14 +87,9 @@ const cameraPresets: readonly CameraPreset[] = [
 
 const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#0c1016" fill-opacity="0.45" d="M32 8l8 17 16 8v5l-16 5-8 15-8-15-16-5v-5l16-8z"/>
-    <path
-      fill="#ffd54a"
-      stroke="#061019"
-      stroke-width="2"
-      stroke-linejoin="round"
-      d="M32 2l5 16 17 6v7l-16 4-7 27-5-1 4-26-9-2 1 10-4 1-4-14-13-4v-7l17-6 5-16z"
-    />
+    <path fill="#061019" fill-opacity="0.36" d="M32 5l4 14 17 10v5l-14 3-4 20h-6l-4-20-14-3v-5l17-10z"/>
+    <path fill="#ffd54a" d="M31.8 2c1.2 0 2.2.8 2.5 2L36.7 17l16 8.9c1 .5 1.6 1.5 1.6 2.6v4.2c0 1.3-.9 2.4-2.1 2.6L39.7 38l-4.2 21.7c-.2 1.1-1.1 1.8-2.2 1.8h-2.7c-1.1 0-2-.7-2.2-1.8L24.3 38 11.8 35.3c-1.2-.2-2.1-1.3-2.1-2.6v-4.2c0-1.1.6-2.1 1.6-2.6l16-8.9L29.7 4c.3-1.2 1.3-2 2.5-2h-.4z"/>
+    <path fill="#061019" fill-opacity="0.32" d="M30.3 6.8h3.4L35.9 18l14.3 8v2.8l-12.1 2.4-3.1 16.3h-1.8l-1.2-8-1.2 8H29l-3.1-16.3-12.1-2.4V26l14.3-8z"/>
   </svg>
 `)}`;
 
@@ -205,6 +209,49 @@ function centroidFromAirspace(overlay: AirspaceOverlay): { lat: number; lon: num
   };
 }
 
+function normalizeLongitude(lon: number): number {
+  return ((lon + 540) % 360) - 180;
+}
+
+function buildViewBounds(viewer: Viewer): ViewBounds | null {
+  const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
+  if (!rectangle) {
+    return null;
+  }
+
+  const west = normalizeLongitude(CesiumMath.toDegrees(rectangle.west));
+  const east = normalizeLongitude(CesiumMath.toDegrees(rectangle.east));
+  const south = CesiumMath.toDegrees(rectangle.south);
+  const north = CesiumMath.toDegrees(rectangle.north);
+
+  if (![west, east, south, north].every(Number.isFinite)) {
+    return null;
+  }
+
+  const crossesAntimeridian = east < west;
+  const longitudinalSpan = crossesAntimeridian ? east + 360 - west : east - west;
+  const latitudinalSpan = north - south;
+  const bbox =
+    longitudinalSpan >= 350 || latitudinalSpan >= 170 || crossesAntimeridian
+      ? null
+      : `${west.toFixed(4)},${south.toFixed(4)},${east.toFixed(4)},${north.toFixed(4)}`;
+
+  return { west, south, east, north, crossesAntimeridian, bbox };
+}
+
+function isPointInView(lat: number, lon: number, bounds: ViewBounds | null): boolean {
+  if (!bounds) {
+    return true;
+  }
+
+  const normalizedLon = normalizeLongitude(lon);
+  const insideLon = bounds.crossesAntimeridian
+    ? normalizedLon >= bounds.west || normalizedLon <= bounds.east
+    : normalizedLon >= bounds.west && normalizedLon <= bounds.east;
+
+  return insideLon && lat >= bounds.south && lat <= bounds.north;
+}
+
 function createPropertyBag(payload: GlobeEntityPayload): PropertyBag {
   return new PropertyBag({
     kind: payload.kind,
@@ -259,6 +306,7 @@ export default function App() {
   const viewerRef = useRef<Viewer | null>(null);
   const viewerHostRef = useRef<HTMLDivElement | null>(null);
   const airspaceSourceRef = useRef<GeoJsonDataSource | null>(null);
+  const viewQueryRef = useRef("");
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
   const [selected, setSelected] = useState<SelectedEntity>(null);
   const [detailTab, setDetailTab] = useState<(typeof detailTabs)[number]>("details");
@@ -278,6 +326,7 @@ export default function App() {
   const [vesselTracks, setVesselTracks] = useState<TimelineTrack[]>([]);
   const [status, setStatus] = useState("Loading operational picture...");
   const [activePreset, setActivePreset] = useState<string>("global");
+  const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
 
   const selectedNotes = useMemo(
     () =>
@@ -298,6 +347,19 @@ export default function App() {
     [selected, watchlists]
   );
   const selectedKey = selected ? `${selected.kind}:${selected.id}` : null;
+  const viewQuery = viewBounds?.bbox ?? "";
+  const visibleAircraft = useMemo(
+    () => aircraft.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 2200),
+    [aircraft, viewBounds]
+  );
+  const visibleVessels = useMemo(
+    () => vessels.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 1400),
+    [vessels, viewBounds]
+  );
+
+  useEffect(() => {
+    viewQueryRef.current = viewQuery;
+  }, [viewQuery]);
 
   function flyToPreset(preset: CameraPreset) {
     const viewer = viewerRef.current;
@@ -417,6 +479,9 @@ export default function App() {
       destination: Cartesian3.fromDegrees(-20, 28, 22_000_000),
       duration: 0
     });
+    const syncViewBounds = () => setViewBounds(buildViewBounds(viewer));
+    viewer.camera.moveEnd.addEventListener(syncViewBounds);
+    window.setTimeout(syncViewBounds, 0);
 
     const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((movement: { position: Cartesian2 }) => {
@@ -437,18 +502,19 @@ export default function App() {
 
     viewerRef.current = viewer;
     return () => {
+      viewer.camera.moveEnd.removeEventListener(syncViewBounds);
       handler.destroy();
       viewer.destroy();
       viewerRef.current = null;
     };
   }, []);
 
-  async function loadOperationalData() {
+  async function loadOperationalData(bbox?: string | null) {
     try {
       setStatus("Synchronizing live data...");
       const [nextAircraft, nextVessels, nextAirspace, nextCases, nextWatchlists, nextNotes, nextViews] = await Promise.all([
-        api.getAircraftCurrent(),
-        api.getVesselsCurrent(),
+        api.getAircraftCurrent(bbox ?? undefined),
+        api.getVesselsCurrent(bbox ?? undefined),
         api.getAirspaceCurrent(),
         api.getCases(),
         api.getWatchlists(),
@@ -464,7 +530,7 @@ export default function App() {
         setWatchlists(nextWatchlists);
         setNotes(nextNotes);
         setSavedViews(nextViews);
-        setStatus(`Live traffic: ${nextAircraft.length} airborne, ${nextVessels.length} maritime, ${nextAirspace.length} overlays.`);
+        setStatus(`Live traffic: ${nextAircraft.length} airborne, ${nextVessels.length} maritime, ${nextAirspace.length} overlays in view.`);
       });
     } catch {
       setStatus("API unavailable. Check Eagle Eye services and VITE_API_BASE_URL.");
@@ -472,15 +538,15 @@ export default function App() {
   }
 
   useEffect(() => {
-    void loadOperationalData();
+    void loadOperationalData(viewQuery || null);
     const intervalId = window.setInterval(() => {
       if (timelineMode === "live") {
-        void loadOperationalData();
+        void loadOperationalData(viewQuery || null);
       }
     }, 15_000);
 
     return () => window.clearInterval(intervalId);
-  }, [timelineMode]);
+  }, [timelineMode, viewQuery]);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -518,7 +584,7 @@ export default function App() {
         }
 
         if (message.topic === "airspace") {
-          void loadOperationalData();
+          void loadOperationalData(viewQueryRef.current || null);
         }
       });
 
@@ -546,7 +612,7 @@ export default function App() {
     viewer.entities.removeAll();
 
     if (layers.aircraft) {
-      aircraft.forEach((item) => {
+      visibleAircraft.forEach((item) => {
         const isSelected = selectedKey === `aircraft:${item.id}`;
         const vectorDistanceNm = Math.max(12, Math.min(42, (item.velocity_kts ?? 280) / 12));
         const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
@@ -554,7 +620,7 @@ export default function App() {
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
           point: {
-            pixelSize: isSelected ? 18 : 12,
+            pixelSize: isSelected ? 12 : 7,
             color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR).withAlpha(isSelected ? 0.38 : 0.18),
             outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.3),
             outlineWidth: isSelected ? 2 : 1,
@@ -565,8 +631,8 @@ export default function App() {
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 1.24 : 0.96,
-            scaleByDistance: new NearFarScalar(200_000, 1.35, 24_000_000, 0.7),
+            scale: isSelected ? 0.9 : 0.72,
+            scaleByDistance: new NearFarScalar(180_000, isSelected ? 0.42 : 0.24, 22_000_000, isSelected ? 1.02 : 0.86),
             color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
@@ -604,7 +670,7 @@ export default function App() {
     }
 
     if (layers.vessels) {
-      vessels.forEach((item) => {
+      visibleVessels.forEach((item) => {
         const isSelected = selectedKey === `vessel:${item.id}`;
         const vectorDistanceNm = Math.max(2, Math.min(12, (item.speed_kts ?? 16) / 2.2));
         const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
@@ -612,7 +678,7 @@ export default function App() {
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, 0),
           point: {
-            pixelSize: isSelected ? 14 : 10,
+            pixelSize: isSelected ? 10 : 6,
             color: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR).withAlpha(isSelected ? 0.32 : 0.16),
             outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.28),
             outlineWidth: 1,
@@ -623,8 +689,8 @@ export default function App() {
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 1.06 : 0.84,
-            scaleByDistance: new NearFarScalar(200_000, 1.2, 24_000_000, 0.6),
+            scale: isSelected ? 0.82 : 0.66,
+            scaleByDistance: new NearFarScalar(180_000, isSelected ? 0.38 : 0.22, 22_000_000, isSelected ? 0.92 : 0.78),
             color: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
@@ -677,7 +743,7 @@ export default function App() {
         }
       });
     });
-  }, [aircraft, vessels, aircraftTracks, vesselTracks, layers.aircraft, layers.vessels, selected, selectedKey]);
+  }, [visibleAircraft, visibleVessels, aircraftTracks, vesselTracks, layers.aircraft, layers.vessels, selected, selectedKey]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -960,12 +1026,12 @@ export default function App() {
             <div className="tracker-badge">LIVE TRAFFIC PICTURE</div>
             <div className="tracker-metrics">
               <div className="tracker-metric">
-                <strong>{aircraft.length.toLocaleString()}</strong>
-                <span>Aircraft</span>
+                <strong>{visibleAircraft.length.toLocaleString()}</strong>
+                <span>Aircraft visible</span>
               </div>
               <div className="tracker-metric">
-                <strong>{vessels.length.toLocaleString()}</strong>
-                <span>Vessels</span>
+                <strong>{visibleVessels.length.toLocaleString()}</strong>
+                <span>Vessels visible</span>
               </div>
               <div className="tracker-metric">
                 <strong>{airspace.length.toLocaleString()}</strong>
