@@ -3,6 +3,7 @@ import type {
   AirspaceOverlay,
   CaseRecord,
   LiveEnvelope,
+  MaritimeProviderDescriptor,
   NoteRecord,
   OrbitPathResponse,
   SavedViewRecord,
@@ -12,6 +13,8 @@ import type {
   TagRecord,
   TimelineResponse,
   Vessel,
+  VesselPresenceOverlayRecord,
+  VesselSourceHealthRecord,
   WatchlistRecord
 } from "@eagle-eye/shared-types";
 
@@ -49,6 +52,12 @@ export const api = {
     requestJson<Vessel[]>(`/api/vessels/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getVesselsHistory: (params: URLSearchParams) =>
     requestJson<TimelineResponse>(`/api/vessels/history?${params.toString()}`),
+  getVessel: (mmsi: string) => requestJson<Vessel>(`/api/vessels/${encodeURIComponent(mmsi)}`),
+  searchVessels: (query: string) => requestJson<Vessel[]>(`/api/vessels/search?q=${encodeURIComponent(query)}`),
+  getVesselSourceHealth: () => requestJson<VesselSourceHealthRecord[]>("/api/vessels/source-health"),
+  getVesselProviders: () => requestJson<MaritimeProviderDescriptor[]>("/api/vessels/providers"),
+  getVesselPresenceOverlay: (params?: URLSearchParams) =>
+    requestJson<VesselPresenceOverlayRecord[]>(`/api/vessels/presence-overlay${params ? `?${params.toString()}` : ""}`),
   getSatellitesCurrent: (bbox?: string) =>
     requestJson<Satellite[]>(`/api/satellites/current?limit=2500${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getSatellitesHistory: (params: URLSearchParams) =>

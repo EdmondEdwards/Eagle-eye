@@ -9,8 +9,9 @@ from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 
-from source_adapters.adapters import AISStreamAdapter, FAAAirspaceAdapter, OpenSkyAdapter
+from source_adapters.adapters import FAAAirspaceAdapter, OpenSkyAdapter
 from source_adapters.canonical import (
     AirspaceOverlayRecord,
     AircraftSnapshot,
@@ -19,13 +20,13 @@ from source_adapters.canonical import (
     SatelliteIngestResult,
     SatelliteSnapshot,
     SatelliteSourceSnapshotRecord,
-    VesselSnapshot,
 )
 from source_adapters.celestrak_adapter import CelesTrakSatelliteAdapter
 from source_adapters.n2yo_adapter import N2YOSatelliteAdapter
 from source_adapters.satellite_propagation_service import SatellitePropagationService
 from source_adapters.satellite_provider import SatelliteProvider
 from source_adapters.spacetrack_adapter import SpaceTrackSatelliteAdapter
+from .maritime import MARITIME_DDL, maritime_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 LOGGER = logging.getLogger("eagle-eye-worker")
@@ -266,8 +267,14 @@ def _split_groups(raw_value: str) -> tuple[str, ...]:
 
 def ensure_runtime_schema() -> None:
     with engine.begin() as conn:
-        for statement in SATELLITE_DDL:
-            conn.execute(text(statement))
+        for statement in (*MARITIME_DDL, *SATELLITE_DDL):
+            try:
+                conn.execute(text(statement))
+            except IntegrityError as exc:
+                message = str(exc.orig)
+                if "pg_type_typname_nsp_index" in message or "already exists" in message:
+                    continue
+                raise
 
 
 def _satellite_provider() -> SatelliteProvider:
@@ -325,57 +332,6 @@ def persist_aircraft(records: list[AircraftSnapshot]) -> None:
                   :id, :icao24, :callsign, :registration, :operator, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
                   :altitude_m, :heading_deg, :velocity_kts, :vertical_rate, :source, :source_confidence,
                   :observed_at, :raw_reference, CAST(:raw_payload AS jsonb)
-                )
-                """
-            ),
-            [{**record.to_dict(), "raw_payload": json.dumps(record.raw_payload)} for record in records],
-        )
-
-
-def persist_vessels(records: list[VesselSnapshot]) -> None:
-    if not records:
-        return
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                INSERT INTO vessels_current (
-                  id, mmsi, imo, vessel_name, vessel_type, flag, geom, heading_deg, speed_kts,
-                  source, source_confidence, observed_at, raw_reference, raw_payload, updated_at
-                )
-                VALUES (
-                  :id, :mmsi, :imo, :vessel_name, :vessel_type, :flag, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
-                  :heading_deg, :speed_kts, :source, :source_confidence, :observed_at, :raw_reference, CAST(:raw_payload AS jsonb), NOW()
-                )
-                ON CONFLICT (id) DO UPDATE SET
-                  mmsi = EXCLUDED.mmsi,
-                  imo = EXCLUDED.imo,
-                  vessel_name = EXCLUDED.vessel_name,
-                  vessel_type = EXCLUDED.vessel_type,
-                  flag = EXCLUDED.flag,
-                  geom = EXCLUDED.geom,
-                  heading_deg = EXCLUDED.heading_deg,
-                  speed_kts = EXCLUDED.speed_kts,
-                  source = EXCLUDED.source,
-                  source_confidence = EXCLUDED.source_confidence,
-                  observed_at = EXCLUDED.observed_at,
-                  raw_reference = EXCLUDED.raw_reference,
-                  raw_payload = EXCLUDED.raw_payload,
-                  updated_at = NOW()
-                """
-            ),
-            [{**record.to_dict(), "raw_payload": json.dumps(record.raw_payload)} for record in records],
-        )
-        conn.execute(
-            text(
-                """
-                INSERT INTO vessels_history (
-                  entity_id, mmsi, imo, vessel_name, vessel_type, flag, geom, heading_deg, speed_kts,
-                  source, source_confidence, observed_at, raw_reference, raw_payload
-                )
-                VALUES (
-                  :id, :mmsi, :imo, :vessel_name, :vessel_type, :flag, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
-                  :heading_deg, :speed_kts, :source, :source_confidence, :observed_at, :raw_reference, CAST(:raw_payload AS jsonb)
                 )
                 """
             ),
@@ -602,21 +558,6 @@ async def aircraft_loop() -> None:
             backoff = min(backoff * 2, 300)
 
 
-async def vessel_loop() -> None:
-    adapter = AISStreamAdapter(os.getenv("AISSTREAM_API_KEY"))
-    buffer: list[VesselSnapshot] = []
-    last_flush = asyncio.get_running_loop().time()
-    async for record in adapter.stream():
-        buffer.append(record)
-        if len(buffer) >= 200 or asyncio.get_running_loop().time() - last_flush >= 2:
-            flush_batch = buffer[:]
-            buffer.clear()
-            persist_vessels(flush_batch)
-            for item in flush_batch[:250]:
-                await publish("vessel", item.to_dict())
-            last_flush = asyncio.get_running_loop().time()
-
-
 async def airspace_loop() -> None:
     adapter = FAAAirspaceAdapter()
     while True:
@@ -709,6 +650,24 @@ async def retention_loop() -> None:
             conn.execute(
                 text(
                     """
+                    DELETE FROM vessel_source_snapshots
+                    WHERE observed_at < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM vessel_presence_overlays
+                    WHERE observed_to < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
                     DELETE FROM airspace_overlays
                     WHERE active_to IS NOT NULL
                       AND active_to < (:cutoff - make_interval(days => 1))
@@ -742,7 +701,7 @@ async def main() -> None:
     ensure_runtime_schema()
     await asyncio.gather(
         aircraft_loop(),
-        vessel_loop(),
+        maritime_loop(engine, publish),
         satellite_loop(),
         airspace_loop(),
         retention_loop(),

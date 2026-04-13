@@ -1,6 +1,8 @@
 export type SourceName =
   | "opensky"
   | "aisstream"
+  | "aishub"
+  | "global_fishing_watch"
   | "celestrak"
   | "spacetrack"
   | "n2yo"
@@ -44,10 +46,54 @@ export interface Vessel extends SourceProvenance, GeoPoint {
   mmsi: string;
   imo?: string | null;
   vessel_name?: string | null;
+  callsign?: string | null;
   vessel_type?: string | null;
   flag?: string | null;
   heading_deg?: number | null;
+  course_deg?: number | null;
   speed_kts?: number | null;
+  nav_status?: string | null;
+  destination?: string | null;
+  draught_m?: number | null;
+  source_record_id?: string | null;
+  merged_confidence?: number | null;
+  last_ingested_at?: string | null;
+  stale?: boolean;
+}
+
+export interface VesselSourceHealthRecord {
+  provider_name: string;
+  ingest_mode: "websocket" | "polling" | "batch";
+  enabled: boolean;
+  priority: number;
+  health_state: "healthy" | "degraded" | "unhealthy" | "disabled";
+  last_success?: string | null;
+  last_attempt?: string | null;
+  valid_message_count: number;
+  error_count: number;
+  stall_threshold_seconds?: number | null;
+  last_error?: string | null;
+  updated_at: string;
+}
+
+export interface MaritimeProviderDescriptor {
+  provider_name: string;
+  ingest_mode: "websocket" | "polling" | "batch";
+  priority: number;
+  enabled: boolean;
+  description?: string | null;
+}
+
+export interface VesselPresenceOverlayRecord extends SourceProvenance {
+  overlay_id: string;
+  provider: string;
+  dataset: string;
+  label: string;
+  category: string;
+  geometry: GeoJsonGeometry;
+  density?: number | null;
+  observed_from: string;
+  observed_to: string;
 }
 
 export interface Satellite extends SourceProvenance {
@@ -238,7 +284,14 @@ export interface SearchResult {
 }
 
 export interface LiveEnvelope {
-  topic: "aircraft" | "vessel" | "satellite" | "airspace" | "satellite.batch" | "heartbeat";
+  topic:
+    | "aircraft"
+    | "vessel"
+    | "satellite"
+    | "airspace"
+    | "vessel.source-health"
+    | "satellite.batch"
+    | "heartbeat";
   action: "upsert" | "delete";
   payload: Record<string, unknown>;
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 
 def utc_now() -> datetime:
@@ -46,20 +46,97 @@ class VesselSnapshot:
     mmsi: str
     imo: str | None
     vessel_name: str | None
+    callsign: str | None
     vessel_type: str | None
     flag: str | None
     lat: float
     lon: float
     heading_deg: float | None
+    course_deg: float | None
     speed_kts: float | None
-    source: str = "aisstream"
-    source_confidence: float = 0.78
+    nav_status: str | None
+    destination: str | None
+    draught_m: float | None
+    source: str
+    source_record_id: str | None = None
+    source_confidence: float = 0.75
+    merged_confidence: float | None = None
     observed_at: datetime = field(default_factory=utc_now)
+    last_ingested_at: datetime = field(default_factory=utc_now)
+    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    stale: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "observed_at", "last_ingested_at")
+
+
+@dataclass(slots=True)
+class VesselSourceSnapshotRecord:
+    snapshot_id: str
+    provider: str
+    source_record_id: str | None
+    mmsi: str | None
+    imo: str | None
+    vessel_name: str | None
+    observed_at: datetime
+    ingested_at: datetime = field(default_factory=utc_now)
+    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    parse_error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "observed_at", "ingested_at")
+
+
+@dataclass(slots=True)
+class VesselSourceHealthRecord:
+    provider_name: str
+    ingest_mode: Literal["websocket", "polling", "batch"]
+    enabled: bool
+    priority: int
+    health_state: Literal["healthy", "degraded", "unhealthy", "disabled"]
+    last_success: datetime | None = None
+    last_attempt: datetime | None = None
+    valid_message_count: int = 0
+    error_count: int = 0
+    stall_threshold_seconds: int | None = None
+    last_error: str | None = None
+    updated_at: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "last_success", "last_attempt", "updated_at")
+
+
+@dataclass(slots=True)
+class VesselPresenceOverlayRecord:
+    overlay_id: str
+    provider: str
+    dataset: str
+    label: str
+    category: str
+    geometry: dict[str, Any]
+    density: float | None
+    observed_from: datetime
+    observed_to: datetime
+    source_confidence: float = 0.58
     raw_reference: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return _serialize(asdict(self), "observed_at")
+        return _serialize(asdict(self), "observed_from", "observed_to")
+
+
+@dataclass(slots=True)
+class MaritimeProviderDescriptor:
+    provider_name: str
+    ingest_mode: Literal["websocket", "polling", "batch"]
+    priority: int
+    enabled: bool
+    description: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)

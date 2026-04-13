@@ -62,14 +62,23 @@ CREATE TABLE IF NOT EXISTS vessels_current (
   mmsi TEXT NOT NULL,
   imo TEXT,
   vessel_name TEXT,
+  callsign TEXT,
   vessel_type TEXT,
   flag TEXT,
   geom geometry(Point, 4326) NOT NULL,
   heading_deg DOUBLE PRECISION,
+  course_deg DOUBLE PRECISION,
   speed_kts DOUBLE PRECISION,
+  nav_status TEXT,
+  destination TEXT,
+  draught_m DOUBLE PRECISION,
   source TEXT NOT NULL,
+  source_record_id TEXT,
   source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+  merged_confidence DOUBLE PRECISION,
   observed_at TIMESTAMPTZ NOT NULL,
+  last_ingested_at TIMESTAMPTZ,
+  stale BOOLEAN NOT NULL DEFAULT FALSE,
   raw_reference TEXT,
   raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -78,6 +87,10 @@ CREATE TABLE IF NOT EXISTS vessels_current (
 CREATE INDEX IF NOT EXISTS idx_vessels_current_geom ON vessels_current USING GIST (geom);
 CREATE INDEX IF NOT EXISTS idx_vessels_current_observed_at ON vessels_current (observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vessels_current_mmsi ON vessels_current (mmsi);
+CREATE INDEX IF NOT EXISTS idx_vessels_current_imo ON vessels_current (imo);
+CREATE INDEX IF NOT EXISTS idx_vessels_current_source ON vessels_current (source, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vessels_current_flag ON vessels_current (flag);
+CREATE INDEX IF NOT EXISTS idx_vessels_current_type ON vessels_current (vessel_type);
 
 CREATE TABLE IF NOT EXISTS vessels_history (
   history_id BIGSERIAL PRIMARY KEY,
@@ -85,16 +98,25 @@ CREATE TABLE IF NOT EXISTS vessels_history (
   mmsi TEXT NOT NULL,
   imo TEXT,
   vessel_name TEXT,
+  callsign TEXT,
   vessel_type TEXT,
   flag TEXT,
   geom geometry(Point, 4326) NOT NULL,
   heading_deg DOUBLE PRECISION,
+  course_deg DOUBLE PRECISION,
   speed_kts DOUBLE PRECISION,
+  nav_status TEXT,
+  destination TEXT,
+  draught_m DOUBLE PRECISION,
+  source_record_id TEXT,
   altitude_m DOUBLE PRECISION,
   velocity_kts DOUBLE PRECISION,
   source TEXT NOT NULL,
   source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+  merged_confidence DOUBLE PRECISION,
   observed_at TIMESTAMPTZ NOT NULL,
+  last_ingested_at TIMESTAMPTZ,
+  stale BOOLEAN NOT NULL DEFAULT FALSE,
   raw_reference TEXT,
   raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -103,6 +125,63 @@ CREATE TABLE IF NOT EXISTS vessels_history (
 CREATE INDEX IF NOT EXISTS idx_vessels_history_entity_time ON vessels_history (entity_id, observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vessels_history_observed_at ON vessels_history (observed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_vessels_history_geom ON vessels_history USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_vessels_history_mmsi_time ON vessels_history (mmsi, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vessels_history_source ON vessels_history (source, observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS vessel_source_health (
+  provider_name TEXT PRIMARY KEY,
+  ingest_mode TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  priority INTEGER NOT NULL DEFAULT 0,
+  health_state TEXT NOT NULL,
+  last_success TIMESTAMPTZ,
+  last_attempt TIMESTAMPTZ,
+  valid_message_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  stall_threshold_seconds INTEGER,
+  last_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_vessel_source_health_state ON vessel_source_health (health_state, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS vessel_source_snapshots (
+  snapshot_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  source_record_id TEXT,
+  mmsi TEXT,
+  imo TEXT,
+  vessel_name TEXT,
+  observed_at TIMESTAMPTZ NOT NULL,
+  ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  raw_reference TEXT,
+  raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  parse_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_vessel_source_snapshots_mmsi_time ON vessel_source_snapshots (mmsi, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_vessel_source_snapshots_provider_time ON vessel_source_snapshots (provider, ingested_at DESC);
+
+CREATE TABLE IF NOT EXISTS vessel_presence_overlays (
+  overlay_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  dataset TEXT NOT NULL,
+  label TEXT NOT NULL,
+  category TEXT NOT NULL,
+  geom geometry(Geometry, 4326) NOT NULL,
+  density DOUBLE PRECISION,
+  observed_from TIMESTAMPTZ NOT NULL,
+  observed_to TIMESTAMPTZ NOT NULL,
+  source TEXT NOT NULL,
+  source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+  observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  raw_reference TEXT,
+  raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_vessel_presence_overlays_geom ON vessel_presence_overlays USING GIST (geom);
+CREATE INDEX IF NOT EXISTS idx_vessel_presence_overlays_window ON vessel_presence_overlays (observed_from DESC, observed_to DESC);
 
 CREATE TABLE IF NOT EXISTS airspace_overlays (
   id TEXT PRIMARY KEY,
@@ -234,4 +313,3 @@ CREATE TRIGGER trg_watchlists_updated_at BEFORE UPDATE ON watchlists FOR EACH RO
 
 DROP TRIGGER IF EXISTS trg_saved_views_updated_at ON saved_views;
 CREATE TRIGGER trg_saved_views_updated_at BEFORE UPDATE ON saved_views FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-

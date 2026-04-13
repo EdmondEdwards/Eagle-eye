@@ -11,7 +11,9 @@ Eagle Eye is a self-hosted OSINT analyst application for aggregating global airc
 - PostgreSQL + PostGIS current-state and history tables
 - Redis-backed live pub/sub
 - OpenSky aircraft polling structure
-- AISStream websocket ingest structure
+- AISStream primary real-time vessel ingest with resilient fallback architecture
+- AISHub fallback / supplement polling path for maritime continuity
+- Global Fishing Watch delayed vessel presence enrichment
 - CelesTrak-backed satellite catalog, live positions, and selected-orbit previews
 - FAA TFR / airspace overlay ingest structure
 - 7-day retention cleanup job
@@ -55,7 +57,8 @@ eagle-eye/
    - `AISSTREAM_API_KEY`
    - `CESIUM_ION_TOKEN`
 3. Satellite support defaults to public CelesTrak GP data and requires no key for first boot. Optional provider credentials can be added later for Space-Track or N2YO.
-4. Adjust database credentials and `VITE_API_BASE_URL` if your browser will reach the API through a different local IP or reverse proxy.
+4. Maritime failover defaults to `AISStream` for live vessel tracks. `AISHub` is optional and must never be polled more frequently than once per minute. `Global Fishing Watch` is optional and only used for delayed vessel presence enrichment.
+5. Adjust database credentials and `VITE_API_BASE_URL` if your browser will reach the API through a different local IP or reverse proxy.
 
 The required environment variables are:
 
@@ -69,6 +72,16 @@ REDIS_URL
 OPENSKY_CLIENT_ID
 OPENSKY_CLIENT_SECRET
 AISSTREAM_API_KEY
+AISSTREAM_BOUNDING_BOXES_JSON
+AISSTREAM_FILTER_MESSAGE_TYPES_JSON
+AISSTREAM_STALL_THRESHOLD_SECONDS
+ENABLE_AISHUB
+AISHUB_USERNAME
+AISHUB_PASSWORD
+AISHUB_POLL_INTERVAL_SECONDS
+ENABLE_GFW
+GFW_API_TOKEN
+GFW_POLL_INTERVAL_SECONDS
 CESIUM_ION_TOKEN
 ENABLE_SATELLITES
 SATELLITE_DEFAULT_SOURCE
@@ -96,8 +109,13 @@ Once the services are up:
 ## Architecture summary
 
 - `apps/worker` normalizes source feeds into canonical models from `packages/source-adapters`.
+- Vessel ingest uses provider abstraction plus fusion:
+  - `AISStream` is the primary real-time websocket source.
+  - `AISHub` is a one-minute-clamped polling fallback / supplement.
+  - `Global Fishing Watch` contributes delayed vessel presence overlays and historical context, not true real-time vessel telemetry.
 - Current-state tables power live map rendering and fast lookup.
 - History tables power replay, movement playback, and timeline views.
+- Maritime state persists fused vessel tracks plus provider metadata in `vessel_source_health`, `vessel_source_snapshots`, and `vessel_presence_overlays`.
 - Satellite ingest persists four layers of state: `satellites_catalog`, `satellites_current`, `satellites_history`, and `satellite_source_snapshots`.
 - Redis carries normalized live envelopes into `/ws/live`.
 - `apps/api` exposes analyst CRUD workflows and geospatial/time-window queries.
@@ -134,11 +152,37 @@ For Cesium, the token is baked into the web bundle at build time, so rebuilding 
 - `SPACETRACK_USERNAME` and `SPACETRACK_PASSWORD` are optional and only used if you later switch `SATELLITE_DEFAULT_SOURCE=spacetrack`.
 - `N2YO_API_KEY` is optional and only used if you later switch `SATELLITE_DEFAULT_SOURCE=n2yo`.
 
+## Maritime Providers
+
+- `AISStream` is the primary live maritime source and is preferred whenever it is healthy.
+- `AISHub` is an optional fallback / supplement. Eagle Eye clamps its polling interval to at least 60 seconds to respect AISHub's documented limit.
+- `Global Fishing Watch` is optional enrichment only. It provides delayed AIS-derived vessel presence context, not sub-second live vessel telemetry.
+- Provider health is exposed via `/api/vessels/source-health`.
+- Provider descriptors are exposed via `/api/vessels/providers`.
+- Delayed vessel presence overlays are exposed via `/api/vessels/presence-overlay`.
+
+### Maritime Env Knobs
+
+- `ENABLE_AISSTREAM=true`
+- `AISSTREAM_API_KEY=`
+- `AISSTREAM_BOUNDING_BOXES_JSON=[[[-90,-180],[90,180]]]`
+- `AISSTREAM_FILTER_MESSAGE_TYPES_JSON=[]`
+- `AISSTREAM_STALL_THRESHOLD_SECONDS=90`
+- `ENABLE_AISHUB=false`
+- `AISHUB_USERNAME=`
+- `AISHUB_PASSWORD=`
+- `AISHUB_POLL_INTERVAL_SECONDS=60`
+- `ENABLE_GFW=false`
+- `GFW_API_TOKEN=`
+- `GFW_POLL_INTERVAL_SECONDS=3600`
+
 ## v1 limitations
 
 - FAA public airspace/TFR parsing is implemented as a best-effort ingestion path against public FAA pages and may need source-specific tuning if the FAA page structure changes.
 - OpenSky and AISStream throughput depends on source-side limits and the resources of the local host.
-- AISStream requires a valid API key; if it is blank or invalid, the vessel layer will remain empty while the rest of the stack stays up.
+- AISStream requires a valid API key; if it is blank or invalid, Eagle Eye can continue on AISHub if that fallback is enabled and configured.
+- AISHub must not be queried more than once per minute. Eagle Eye clamps its interval to 60 seconds even if you configure a lower value.
+- Global Fishing Watch overlays are delayed vessel presence summaries and should not be interpreted as live vessel telemetry.
 - Satellite paths in v1 are driven by current GP/TLE snapshots from public CelesTrak groups. Historical playback falls back to the nearest retained source snapshot when an exact historical point is unavailable.
 - No authentication, alerting, anomaly detection, or shared multi-user workspace in v1.
 - Webcams are intentionally deferred; only the adapter interface and placeholder catalog shape are prepared.

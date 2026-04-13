@@ -30,12 +30,60 @@ class Vessel(BaseModel):
     mmsi: str
     imo: str | None = None
     vessel_name: str | None = None
+    callsign: str | None = None
     vessel_type: str | None = None
     flag: str | None = None
     lat: float
     lon: float
     heading_deg: float | None = None
+    course_deg: float | None = None
     speed_kts: float | None = None
+    nav_status: str | None = None
+    destination: str | None = None
+    draught_m: float | None = None
+    source: str
+    source_record_id: str | None = None
+    source_confidence: float
+    merged_confidence: float | None = None
+    observed_at: datetime
+    last_ingested_at: datetime | None = None
+    stale: bool = False
+    raw_reference: str | None = None
+
+
+class VesselSourceHealth(BaseModel):
+    provider_name: str
+    ingest_mode: Literal["websocket", "polling", "batch"]
+    enabled: bool
+    priority: int
+    health_state: Literal["healthy", "degraded", "unhealthy", "disabled"]
+    last_success: datetime | None = None
+    last_attempt: datetime | None = None
+    valid_message_count: int
+    error_count: int
+    stall_threshold_seconds: int | None = None
+    last_error: str | None = None
+    updated_at: datetime
+
+
+class MaritimeProviderDescriptor(BaseModel):
+    provider_name: str
+    ingest_mode: Literal["websocket", "polling", "batch"]
+    priority: int
+    enabled: bool
+    description: str | None = None
+
+
+class VesselPresenceOverlay(BaseModel):
+    overlay_id: str
+    provider: str
+    dataset: str
+    label: str
+    category: str
+    geometry: dict[str, Any]
+    density: float | None = None
+    observed_from: datetime
+    observed_to: datetime
     source: str
     source_confidence: float
     observed_at: datetime
@@ -239,6 +287,7 @@ class TagAssignment(BaseModel):
 
 
 class TagAssignmentCreate(BaseModel):
+    tag_id: UUID
     case_id: UUID | None = None
     entity_kind: str | None = None
     entity_id: str | None = None
@@ -306,7 +355,7 @@ class SavedViewCreate(BaseModel):
     heading_deg: float
     pitch_deg: float
     roll_deg: float
-    layers: dict[str, bool]
+    layers: dict[str, bool] = Field(default_factory=dict)
 
 
 class SavedViewUpdate(BaseModel):

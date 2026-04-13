@@ -20,6 +20,7 @@ from .schemas import (
     SavedViewRecord,
     SavedViewUpdate,
     SearchResult,
+    MaritimeProviderDescriptor,
     Satellite,
     SatelliteCatalogRecord,
     TagAssignment,
@@ -29,6 +30,8 @@ from .schemas import (
     TagUpdate,
     TimelineResponse,
     Vessel,
+    VesselPresenceOverlay,
+    VesselSourceHealth,
     WatchlistCreate,
     WatchlistEntity,
     WatchlistEntityCreate,
@@ -67,8 +70,26 @@ def aircraft_history(
 
 
 @router.get("/api/vessels/current", response_model=list[Vessel])
-def vessels_current(bbox: str | None = Query(default=None), limit: int = Query(default=5000, le=10000)) -> list[dict]:
-    return repo.list_vessels_current(bbox, limit)
+def vessels_current(
+    bbox: str | None = Query(default=None),
+    limit: int = Query(default=5000, le=10000),
+    mmsi: str | None = Query(default=None),
+    imo: str | None = Query(default=None),
+    vessel_name: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    vessel_type: str | None = Query(default=None),
+    flag: str | None = Query(default=None),
+) -> list[dict]:
+    return repo.list_vessels_current(
+        bbox,
+        limit,
+        mmsi=mmsi,
+        imo=imo,
+        vessel_name=vessel_name,
+        source=source,
+        vessel_type=vessel_type,
+        flag=flag,
+    )
 
 
 @router.get("/api/vessels/history", response_model=TimelineResponse)
@@ -77,11 +98,69 @@ def vessels_history(
     until: datetime | None = Query(default=None),
     bbox: str | None = Query(default=None),
     entity_id: str | None = Query(default=None),
+    mmsi: str | None = Query(default=None),
+    imo: str | None = Query(default=None),
+    vessel_name: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    vessel_type: str | None = Query(default=None),
+    flag: str | None = Query(default=None),
     limit: int = Query(default=20000, le=100000),
 ) -> dict:
     since = since or _default_since()
     until = until or datetime.now(timezone.utc)
-    return repo.vessel_history(since, until, bbox, entity_id, limit)
+    return repo.vessel_history(
+        since,
+        until,
+        bbox,
+        entity_id,
+        limit,
+        mmsi=mmsi,
+        imo=imo,
+        vessel_name=vessel_name,
+        source=source,
+        vessel_type=vessel_type,
+        flag=flag,
+    )
+
+
+@router.get("/api/vessels/search", response_model=list[Vessel])
+def vessels_search(
+    q: str | None = Query(default=None),
+    bbox: str | None = Query(default=None),
+    limit: int = Query(default=25, le=250),
+    source: str | None = Query(default=None),
+    vessel_type: str | None = Query(default=None),
+    flag: str | None = Query(default=None),
+) -> list[dict]:
+    return repo.search_vessels(q=q, bbox=bbox, limit=limit, source=source, vessel_type=vessel_type, flag=flag)
+
+
+@router.get("/api/vessels/source-health", response_model=list[VesselSourceHealth])
+def vessels_source_health() -> list[dict]:
+    return repo.list_vessel_source_health()
+
+
+@router.get("/api/vessels/providers", response_model=list[MaritimeProviderDescriptor])
+def vessels_providers() -> list[dict]:
+    return repo.list_vessel_providers()
+
+
+@router.get("/api/vessels/presence-overlay", response_model=list[VesselPresenceOverlay])
+def vessels_presence_overlay(
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    provider: str | None = Query(default=None),
+    limit: int = Query(default=250, le=5000),
+) -> list[dict]:
+    return repo.vessel_presence_overlay(since=since, until=until, provider=provider, limit=limit)
+
+
+@router.get("/api/vessels/{mmsi}", response_model=Vessel)
+def get_vessel(mmsi: str) -> dict:
+    record = repo.get_vessel(mmsi)
+    if not record:
+        raise HTTPException(status_code=404, detail="Vessel not found")
+    return record
 
 
 @router.get("/api/satellites/current", response_model=list[Satellite])

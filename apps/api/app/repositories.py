@@ -75,8 +75,26 @@ def list_aircraft_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
     )
 
 
-def list_vessels_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
-    bbox_clause, bbox_params = _build_envelope_clause(bbox)
+def list_vessels_current(
+    bbox: str | None,
+    limit: int,
+    *,
+    mmsi: str | None = None,
+    imo: str | None = None,
+    vessel_name: str | None = None,
+    source: str | None = None,
+    vessel_type: str | None = None,
+    flag: str | None = None,
+) -> list[dict[str, Any]]:
+    where_clause, params = _build_vessel_filters(
+        bbox,
+        mmsi=mmsi,
+        imo=imo,
+        vessel_name=vessel_name,
+        source=source,
+        vessel_type=vessel_type,
+        flag=flag,
+    )
     return fetch_all(
         f"""
         SELECT
@@ -84,24 +102,67 @@ def list_vessels_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
           mmsi,
           imo,
           vessel_name,
+          callsign,
           vessel_type,
           flag,
           ST_Y(geom) AS lat,
           ST_X(geom) AS lon,
           heading_deg,
+          course_deg,
           speed_kts,
+          nav_status,
+          destination,
+          draught_m,
           source,
+          source_record_id,
           source_confidence,
+          merged_confidence,
           observed_at,
+          last_ingested_at,
+          stale,
           raw_reference
         FROM vessels_current
         WHERE 1 = 1
-        {bbox_clause}
+        {where_clause}
         ORDER BY observed_at DESC
         LIMIT :limit
         """,
-        {**bbox_params, "limit": limit},
+        {**params, "limit": limit},
     )
+
+
+def _build_vessel_filters(
+    bbox: str | None,
+    *,
+    mmsi: str | None = None,
+    imo: str | None = None,
+    vessel_name: str | None = None,
+    source: str | None = None,
+    vessel_type: str | None = None,
+    flag: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    bbox_clause, bbox_params = _build_envelope_clause(bbox)
+    clauses = [bbox_clause]
+    params: dict[str, Any] = {**bbox_params}
+    if mmsi:
+        clauses.append("AND mmsi = :mmsi")
+        params["mmsi"] = mmsi
+    if imo:
+        clauses.append("AND imo = :imo")
+        params["imo"] = imo
+    if vessel_name:
+        clauses.append("AND LOWER(COALESCE(vessel_name, '')) LIKE :vessel_name")
+        params["vessel_name"] = f"%{vessel_name.lower()}%"
+    if source:
+        clauses.append("AND LOWER(source) = :source")
+        params["source"] = source.lower()
+    if vessel_type:
+        clauses.append("AND LOWER(COALESCE(vessel_type, '')) = :vessel_type")
+        params["vessel_type"] = vessel_type.lower()
+    if flag:
+        clauses.append("AND LOWER(COALESCE(flag, '')) = :flag")
+        params["flag"] = flag.lower()
+    return "\n".join(filter(None, clauses)), params
 
 
 def _build_satellite_filters(
@@ -383,8 +444,269 @@ def aircraft_history(since: datetime, until: datetime, bbox: str | None, entity_
     return _history_query("aircraft_history", "aircraft", since, until, bbox, entity_id, limit)
 
 
-def vessel_history(since: datetime, until: datetime, bbox: str | None, entity_id: str | None, limit: int) -> dict[str, Any]:
-    return _history_query("vessels_history", "vessel", since, until, bbox, entity_id, limit)
+def vessel_history(
+    since: datetime,
+    until: datetime,
+    bbox: str | None,
+    entity_id: str | None,
+    limit: int,
+    *,
+    mmsi: str | None = None,
+    imo: str | None = None,
+    vessel_name: str | None = None,
+    source: str | None = None,
+    vessel_type: str | None = None,
+    flag: str | None = None,
+) -> dict[str, Any]:
+    bbox_clause, bbox_params = _build_vessel_filters(
+        bbox,
+        mmsi=mmsi or (entity_id.replace("vessel:", "", 1) if entity_id and entity_id.startswith("vessel:") else None),
+        imo=imo,
+        vessel_name=vessel_name,
+        source=source,
+        vessel_type=vessel_type,
+        flag=flag,
+    )
+    entity_clause = "AND entity_id = :entity_id" if entity_id else ""
+    params: dict[str, Any] = {
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+        "limit": limit,
+        **bbox_params,
+    }
+    if entity_id:
+        params["entity_id"] = entity_id
+
+    rows = fetch_all(
+        f"""
+        SELECT
+          entity_id,
+          mmsi,
+          imo,
+          vessel_name,
+          callsign,
+          ST_Y(geom) AS lat,
+          ST_X(geom) AS lon,
+          observed_at,
+          heading_deg,
+          course_deg,
+          speed_kts,
+          nav_status,
+          source,
+          stale
+        FROM vessels_history
+        WHERE observed_at BETWEEN :since AND :until
+        {entity_clause}
+        {bbox_clause}
+        ORDER BY entity_id, observed_at ASC
+        LIMIT :limit
+        """,
+        params,
+    )
+
+    tracks: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = row.get("vessel_name") or row.get("callsign") or row.get("mmsi") or row["entity_id"]
+        track = tracks.setdefault(
+            row["entity_id"],
+            {
+                "entity_id": row["entity_id"],
+                "label": label,
+                "entity_kind": "vessel",
+                "points": [],
+            },
+        )
+        track["points"].append(
+            {
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "observed_at": row["observed_at"],
+                "heading_deg": row.get("heading_deg"),
+                "speed_kts": row.get("speed_kts"),
+                "confidence": None if row.get("stale") is None else (0.35 if row.get("stale") else 0.9),
+            }
+        )
+
+    return {"window": {"from": since, "to": until}, "tracks": list(tracks.values())}
+
+
+def get_vessel(mmsi: str) -> dict[str, Any] | None:
+    return fetch_one(
+        """
+        SELECT
+          id,
+          mmsi,
+          imo,
+          vessel_name,
+          callsign,
+          vessel_type,
+          flag,
+          ST_Y(geom) AS lat,
+          ST_X(geom) AS lon,
+          heading_deg,
+          course_deg,
+          speed_kts,
+          nav_status,
+          destination,
+          draught_m,
+          source,
+          source_record_id,
+          source_confidence,
+          merged_confidence,
+          observed_at,
+          last_ingested_at,
+          stale,
+          raw_reference
+        FROM vessels_current
+        WHERE mmsi = :mmsi
+        """,
+        {"mmsi": mmsi},
+    )
+
+
+def search_vessels(
+    *,
+    q: str | None = None,
+    bbox: str | None = None,
+    limit: int = 25,
+    source: str | None = None,
+    vessel_type: str | None = None,
+    flag: str | None = None,
+) -> list[dict[str, Any]]:
+    where_clause, params = _build_vessel_filters(
+        bbox,
+        source=source,
+        vessel_type=vessel_type,
+        flag=flag,
+    )
+    search_clause = ""
+    if q:
+        params["query"] = f"%{q.lower()}%"
+        search_clause = """
+        AND (
+          LOWER(mmsi) LIKE :query
+          OR LOWER(COALESCE(imo, '')) LIKE :query
+          OR LOWER(COALESCE(vessel_name, '')) LIKE :query
+          OR LOWER(COALESCE(callsign, '')) LIKE :query
+        )
+        """
+    return fetch_all(
+        f"""
+        SELECT
+          id,
+          mmsi,
+          imo,
+          vessel_name,
+          callsign,
+          vessel_type,
+          flag,
+          ST_Y(geom) AS lat,
+          ST_X(geom) AS lon,
+          heading_deg,
+          course_deg,
+          speed_kts,
+          nav_status,
+          destination,
+          draught_m,
+          source,
+          source_record_id,
+          source_confidence,
+          merged_confidence,
+          observed_at,
+          last_ingested_at,
+          stale,
+          raw_reference
+        FROM vessels_current
+        WHERE 1 = 1
+        {where_clause}
+        {search_clause}
+        ORDER BY observed_at DESC
+        LIMIT :limit
+        """,
+        {**params, "limit": limit},
+    )
+
+
+def list_vessel_source_health() -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+          provider_name,
+          ingest_mode,
+          enabled,
+          priority,
+          health_state,
+          last_success,
+          last_attempt,
+          valid_message_count,
+          error_count,
+          stall_threshold_seconds,
+          last_error,
+          updated_at
+        FROM vessel_source_health
+        ORDER BY priority DESC, provider_name ASC
+        """
+    )
+
+
+def list_vessel_providers() -> list[dict[str, Any]]:
+    return fetch_all(
+        """
+        SELECT
+          provider_name,
+          ingest_mode,
+          priority,
+          enabled,
+          NULL::text AS description
+        FROM vessel_source_health
+        ORDER BY priority DESC, provider_name ASC
+        """
+    )
+
+
+def vessel_presence_overlay(
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    provider: str | None = None,
+    limit: int = 250,
+) -> list[dict[str, Any]]:
+    clauses = []
+    params: dict[str, Any] = {"limit": limit}
+    if since:
+        clauses.append("AND observed_to >= :since")
+        params["since"] = since.isoformat()
+    if until:
+        clauses.append("AND observed_from <= :until")
+        params["until"] = until.isoformat()
+    if provider:
+        clauses.append("AND LOWER(provider) = :provider")
+        params["provider"] = provider.lower()
+
+    return fetch_all(
+        f"""
+        SELECT
+          overlay_id,
+          provider,
+          dataset,
+          label,
+          category,
+          ST_AsGeoJSON(geom)::json AS geometry,
+          density,
+          observed_from,
+          observed_to,
+          source,
+          source_confidence,
+          observed_at,
+          raw_reference
+        FROM vessel_presence_overlays
+        WHERE 1 = 1
+        {' '.join(clauses)}
+        ORDER BY observed_to DESC
+        LIMIT :limit
+        """,
+        params,
+    )
 
 
 def satellite_history(
@@ -945,10 +1267,13 @@ def search(query: str) -> list[dict[str, Any]]:
     results.extend(
         fetch_all(
             """
-            SELECT 'vessel' AS kind, id, COALESCE(NULLIF(TRIM(vessel_name), ''), mmsi) AS label, mmsi AS subtitle, source, observed_at,
+            SELECT 'vessel' AS kind, id, COALESCE(NULLIF(TRIM(vessel_name), ''), NULLIF(TRIM(callsign), ''), mmsi) AS label, mmsi AS subtitle, source, observed_at,
             json_build_object('lat', ST_Y(geom), 'lon', ST_X(geom)) AS location
             FROM vessels_current
-            WHERE LOWER(COALESCE(vessel_name, '')) LIKE :like OR LOWER(mmsi) LIKE :like OR LOWER(COALESCE(imo, '')) LIKE :like
+            WHERE LOWER(COALESCE(vessel_name, '')) LIKE :like
+               OR LOWER(mmsi) LIKE :like
+               OR LOWER(COALESCE(imo, '')) LIKE :like
+               OR LOWER(COALESCE(callsign, '')) LIKE :like
             ORDER BY observed_at DESC
             LIMIT 10
             """,

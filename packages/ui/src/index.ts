@@ -1,5 +1,5 @@
 export type LayerDefinition = {
-  key: "aircraft" | "vessels" | "satellites" | "airspace" | "webcams";
+  key: "aircraft" | "vessels" | "vesselPresence" | "satellites" | "airspace" | "webcams";
   label: string;
   color: string;
   disabled?: boolean;
@@ -8,6 +8,7 @@ export type LayerDefinition = {
 export const layerDefinitions: readonly LayerDefinition[] = [
   { key: "aircraft", label: "Aircraft", color: "#ffd54a" },
   { key: "vessels", label: "Vessels", color: "#6ee7ff" },
+  { key: "vesselPresence", label: "Vessel Presence", color: "#56c9ff" },
   { key: "satellites", label: "Satellites", color: "#9af6b0" },
   { key: "airspace", label: "Airspace / TFR", color: "#ff9b3d" },
   { key: "webcams", label: "Webcams", color: "#7a88a2", disabled: true }

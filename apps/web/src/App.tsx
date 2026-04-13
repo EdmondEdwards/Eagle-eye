@@ -23,6 +23,7 @@ import type {
     Aircraft,
     AirspaceOverlay,
     CaseRecord,
+    MaritimeProviderDescriptor,
     NoteRecord,
     SavedViewRecord,
     SearchResult,
@@ -30,6 +31,8 @@ import type {
     TimelinePoint,
     TimelineTrack,
     Vessel,
+    VesselPresenceOverlayRecord,
+    VesselSourceHealthRecord,
     WatchlistRecord
 } from "@eagle-eye/shared-types";
 import { detailTabs, layerDefinitions } from "@eagle-eye/ui";
@@ -72,6 +75,7 @@ type ViewBounds = {
 const defaultLayers: LayerState = {
   aircraft: true,
   vessels: true,
+  vesselPresence: false,
   satellites: true,
   airspace: true,
   webcams: false
@@ -194,12 +198,13 @@ function aircraftLabel(item: Aircraft, isSelected: boolean): string {
 }
 
 function vesselLabel(item: Vessel, isSelected: boolean): string {
-  const primary = item.vessel_name?.trim() || item.mmsi;
+  const freshness = item.stale ? "STALE" : "LIVE";
+  const primary = item.vessel_name?.trim() || item.callsign?.trim() || item.mmsi;
   if (!isSelected) {
     return primary;
   }
 
-  const secondary = [item.vessel_type?.trim(), formatKnots(item.speed_kts)].filter(Boolean).join(" • ");
+  const secondary = [item.vessel_type?.trim(), formatKnots(item.speed_kts), freshness].filter(Boolean).join(" • ");
   return secondary ? `${primary}\n${secondary}` : primary;
 }
 
@@ -478,6 +483,7 @@ export default function App() {
   const viewerRef = useRef<Viewer | null>(null);
   const viewerHostRef = useRef<HTMLDivElement | null>(null);
   const airspaceSourceRef = useRef<GeoJsonDataSource | null>(null);
+  const vesselPresenceSourceRef = useRef<GeoJsonDataSource | null>(null);
   const viewQueryRef = useRef("");
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
   const [selected, setSelected] = useState<SelectedEntity>(null);
@@ -486,6 +492,9 @@ export default function App() {
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [satellites, setSatellites] = useState<Satellite[]>([]);
   const [airspace, setAirspace] = useState<AirspaceOverlay[]>([]);
+  const [vesselPresenceOverlays, setVesselPresenceOverlays] = useState<VesselPresenceOverlayRecord[]>([]);
+  const [vesselSourceHealth, setVesselSourceHealth] = useState<VesselSourceHealthRecord[]>([]);
+  const [vesselProviders, setVesselProviders] = useState<MaritimeProviderDescriptor[]>([]);
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [watchlists, setWatchlists] = useState<WatchlistRecord[]>([]);
   const [notes, setNotes] = useState<NoteRecord[]>([]);
@@ -521,6 +530,10 @@ export default function App() {
   const relatedWatchlists = useMemo(
     () => watchlists.filter((record) => selected && record.entities.some((entity) => entity.entity_id === selected.id)),
     [selected, watchlists]
+  );
+  const primaryVesselHealth = useMemo(
+    () => vesselSourceHealth.find((item) => item.provider_name === "aisstream") ?? vesselSourceHealth[0] ?? null,
+    [vesselSourceHealth]
   );
   const selectedKey = selected ? `${selected.kind}:${selected.id}` : null;
   const viewQuery = viewBounds?.bbox ?? "";
@@ -693,11 +706,26 @@ export default function App() {
   async function loadOperationalData(bbox?: string | null) {
     try {
       setStatus("Synchronizing live data...");
-      const [nextAircraft, nextVessels, nextSatellites, nextAirspace, nextCases, nextWatchlists, nextNotes, nextViews] = await Promise.all([
+      const [
+        nextAircraft,
+        nextVessels,
+        nextSatellites,
+        nextAirspace,
+        nextVesselPresence,
+        nextVesselHealth,
+        nextVesselProviders,
+        nextCases,
+        nextWatchlists,
+        nextNotes,
+        nextViews
+      ] = await Promise.all([
         api.getAircraftCurrent(bbox ?? undefined),
         api.getVesselsCurrent(bbox ?? undefined),
         api.getSatellitesCurrent(bbox ?? undefined),
         api.getAirspaceCurrent(),
+        api.getVesselPresenceOverlay(),
+        api.getVesselSourceHealth(),
+        api.getVesselProviders(),
         api.getCases(),
         api.getWatchlists(),
         api.getNotes(),
@@ -709,6 +737,9 @@ export default function App() {
         setVessels(nextVessels);
         setSatellites(nextSatellites);
         setAirspace(nextAirspace);
+        setVesselPresenceOverlays(nextVesselPresence);
+        setVesselSourceHealth(nextVesselHealth);
+        setVesselProviders(nextVesselProviders);
         setCases(nextCases);
         setWatchlists(nextWatchlists);
         setNotes(nextNotes);
@@ -766,6 +797,13 @@ export default function App() {
             else next.unshift(payload);
             return next.slice(0, 5000);
           });
+        }
+
+        if (message.topic === "vessel.source-health") {
+          const providers = (message.payload.providers as VesselSourceHealthRecord[] | undefined) ?? [];
+          if (Array.isArray(providers)) {
+            setVesselSourceHealth(providers);
+          }
         }
 
         if (message.topic === "satellite") {
@@ -1076,6 +1114,47 @@ export default function App() {
   }, [airspace, layers.airspace]);
 
   useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const syncPresence = async () => {
+      if (vesselPresenceSourceRef.current) {
+        await viewer.dataSources.remove(vesselPresenceSourceRef.current, true);
+        vesselPresenceSourceRef.current = null;
+      }
+
+      if (!layers.vesselPresence || vesselPresenceOverlays.length === 0) {
+        return;
+      }
+
+      const featureCollection = {
+        type: "FeatureCollection",
+        features: vesselPresenceOverlays.map((item) => ({
+          type: "Feature",
+          geometry: item.geometry,
+          properties: {
+            kind: "vessel_presence",
+            label: item.label,
+            density: item.density,
+            provider: item.provider
+          }
+        }))
+      };
+
+      const source = await GeoJsonDataSource.load(featureCollection as Parameters<typeof GeoJsonDataSource.load>[0], {
+        stroke: Color.fromCssColorString("#56c9ff").withAlpha(0.75),
+        fill: Color.fromCssColorString("#56c9ff").withAlpha(0.12),
+        strokeWidth: 1.5
+      });
+
+      vesselPresenceSourceRef.current = source;
+      await viewer.dataSources.add(source);
+    };
+
+    void syncPresence();
+  }, [layers.vesselPresence, vesselPresenceOverlays]);
+
+  useEffect(() => {
     if (timelineMode === "live") {
       setAircraftTracks([]);
       setVesselTracks([]);
@@ -1263,7 +1342,15 @@ export default function App() {
             </div>
             <div className="source-row">
               <strong>AISStream</strong>
-              <span>{renderedVessels.length} rendered</span>
+              <span>{renderedVessels.length} rendered · {primaryVesselHealth?.health_state ?? "unknown"}</span>
+            </div>
+            <div className="source-row">
+              <strong>Maritime Providers</strong>
+              <span>{vesselProviders.filter((item) => item.enabled).length} enabled</span>
+            </div>
+            <div className="source-row">
+              <strong>Vessel Presence</strong>
+              <span>{vesselPresenceOverlays.length} overlays</span>
             </div>
             <div className="source-row">
               <strong>CelesTrak</strong>
@@ -1517,6 +1604,11 @@ export default function App() {
                   {"registration" in selected ? <div><span>Registration</span><strong>{selected.registration ?? "n/a"}</strong></div> : null}
                   {"operator" in selected ? <div><span>Operator</span><strong>{selected.operator ?? "n/a"}</strong></div> : null}
                   {"vessel_type" in selected ? <div><span>Type</span><strong>{selected.vessel_type ?? "n/a"}</strong></div> : null}
+                  {"callsign" in selected ? <div><span>Callsign</span><strong>{selected.callsign ?? "n/a"}</strong></div> : null}
+                  {"nav_status" in selected ? <div><span>Nav Status</span><strong>{selected.nav_status ?? "n/a"}</strong></div> : null}
+                  {"destination" in selected ? <div><span>Destination</span><strong>{selected.destination ?? "n/a"}</strong></div> : null}
+                  {"draught_m" in selected ? <div><span>Draught</span><strong>{selected.draught_m != null ? `${selected.draught_m.toFixed(1)} m` : "n/a"}</strong></div> : null}
+                  {"stale" in selected ? <div><span>Track Freshness</span><strong>{selected.stale ? "STALE" : "FRESH"}</strong></div> : null}
                   {"norad_cat_id" in selected ? <div><span>NORAD</span><strong>{selected.norad_cat_id}</strong></div> : null}
                   {"international_designator" in selected ? <div><span>Intl Designator</span><strong>{selected.international_designator ?? "n/a"}</strong></div> : null}
                   {"group_name" in selected ? <div><span>Group</span><strong>{selected.group_name ?? "n/a"}</strong></div> : null}
@@ -1583,10 +1675,24 @@ export default function App() {
           {detailTab === "sources" && (
             <div className="stack-list">
               {selected ? (
-                <div className="list-card static">
-                  <span>{selected.source}</span>
-                  <small>Confidence {"source_confidence" in selected ? selected.source_confidence : 1}</small>
-                </div>
+                <>
+                  <div className="list-card static">
+                    <span>{selected.source}</span>
+                    <small>Confidence {"source_confidence" in selected ? selected.source_confidence : 1}</small>
+                  </div>
+                  {"source_record_id" in selected ? (
+                    <div className="list-card static">
+                      <span>Provider Record</span>
+                      <small>{selected.source_record_id ?? "n/a"}</small>
+                    </div>
+                  ) : null}
+                  {"merged_confidence" in selected ? (
+                    <div className="list-card static">
+                      <span>Merged Confidence</span>
+                      <small>{selected.merged_confidence ?? "n/a"}</small>
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <p className="muted">Source provenance is shown for tracked entities and overlays.</p>
               )}

@@ -8,11 +8,100 @@ from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from .config import get_settings
 
 settings = get_settings()
 engine: Engine = create_engine(settings.database_url, pool_pre_ping=True, future=True)
+
+VESSEL_DDL = (
+    """
+    ALTER TABLE vessels_current
+    ADD COLUMN IF NOT EXISTS callsign TEXT,
+    ADD COLUMN IF NOT EXISTS course_deg DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS nav_status TEXT,
+    ADD COLUMN IF NOT EXISTS destination TEXT,
+    ADD COLUMN IF NOT EXISTS draught_m DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS source_record_id TEXT,
+    ADD COLUMN IF NOT EXISTS merged_confidence DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS last_ingested_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE
+    """,
+    """
+    ALTER TABLE vessels_history
+    ADD COLUMN IF NOT EXISTS callsign TEXT,
+    ADD COLUMN IF NOT EXISTS course_deg DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS nav_status TEXT,
+    ADD COLUMN IF NOT EXISTS destination TEXT,
+    ADD COLUMN IF NOT EXISTS draught_m DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS source_record_id TEXT,
+    ADD COLUMN IF NOT EXISTS merged_confidence DOUBLE PRECISION,
+    ADD COLUMN IF NOT EXISTS last_ingested_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS stale BOOLEAN NOT NULL DEFAULT FALSE
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS vessel_source_health (
+      provider_name TEXT PRIMARY KEY,
+      ingest_mode TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      priority INTEGER NOT NULL DEFAULT 0,
+      health_state TEXT NOT NULL,
+      last_success TIMESTAMPTZ,
+      last_attempt TIMESTAMPTZ,
+      valid_message_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      stall_threshold_seconds INTEGER,
+      last_error TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS vessel_source_snapshots (
+      snapshot_id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      source_record_id TEXT,
+      mmsi TEXT,
+      imo TEXT,
+      vessel_name TEXT,
+      observed_at TIMESTAMPTZ NOT NULL,
+      ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_reference TEXT,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      parse_error TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS vessel_presence_overlays (
+      overlay_id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      dataset TEXT NOT NULL,
+      label TEXT NOT NULL,
+      category TEXT NOT NULL,
+      geom geometry(Geometry, 4326) NOT NULL,
+      density DOUBLE PRECISION,
+      observed_from TIMESTAMPTZ NOT NULL,
+      observed_to TIMESTAMPTZ NOT NULL,
+      source TEXT NOT NULL,
+      source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+      observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      raw_reference TEXT,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_vessel_source_health_state ON vessel_source_health (health_state, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessel_source_snapshots_mmsi_time ON vessel_source_snapshots (mmsi, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessel_source_snapshots_provider_time ON vessel_source_snapshots (provider, ingested_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessel_presence_overlays_geom ON vessel_presence_overlays USING GIST (geom)",
+    "CREATE INDEX IF NOT EXISTS idx_vessel_presence_overlays_window ON vessel_presence_overlays (observed_from DESC, observed_to DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_current_imo ON vessels_current (imo)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_current_source ON vessels_current (source, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_current_flag ON vessels_current (flag)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_current_type ON vessels_current (vessel_type)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_history_mmsi_time ON vessels_history (mmsi, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_vessels_history_source ON vessels_history (source, observed_at DESC)",
+)
 
 SATELLITE_DDL = (
     """
@@ -276,5 +365,11 @@ def execute_many(query: str, payloads: Iterable[dict[str, Any]]) -> None:
 
 def ensure_runtime_schema() -> None:
     with connection() as conn:
-        for statement in SATELLITE_DDL:
-            conn.execute(text(statement))
+        for statement in (*VESSEL_DDL, *SATELLITE_DDL):
+            try:
+                conn.execute(text(statement))
+            except IntegrityError as exc:
+                message = str(exc.orig)
+                if "pg_type_typname_nsp_index" in message or "already exists" in message:
+                    continue
+                raise

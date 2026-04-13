@@ -15,6 +15,18 @@ class Settings(BaseSettings):
     spacetrack_username: str | None = None
     spacetrack_password: str | None = None
     n2yo_api_key: str | None = None
+    enable_aisstream: bool = True
+    aisstream_api_key: str | None = None
+    aisstream_bounding_boxes_json: str = "[[[-90,-180],[90,180]]]"
+    aisstream_filter_message_types_json: str = "[]"
+    aisstream_stall_threshold_seconds: int = 90
+    enable_aishub: bool = False
+    aishub_username: str | None = None
+    aishub_password: str | None = None
+    aishub_poll_interval_seconds: int = 60
+    enable_gfw: bool = False
+    gfw_api_token: str | None = None
+    gfw_poll_interval_seconds: int = 3600
 
     model_config = SettingsConfigDict(
         env_file=".env",
