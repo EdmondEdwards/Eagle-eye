@@ -1,13 +1,16 @@
 import {
+  ArcType,
   Cartesian2,
   Cartesian3,
   Color,
+  DistanceDisplayCondition,
   Entity,
   GeoJsonDataSource,
   Ion,
   JulianDate,
   LabelStyle,
   Math as CesiumMath,
+  NearFarScalar,
   PropertyBag,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -15,7 +18,7 @@ import {
   Viewer
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
   Aircraft,
   AirspaceOverlay,
@@ -50,18 +53,30 @@ const defaultLayers: LayerState = {
   webcams: false
 };
 
+const AIRCRAFT_COLOR = "#ffd54a";
+const AIRCRAFT_SELECTED_COLOR = "#fff4b3";
+const VESSEL_COLOR = "#6ee7ff";
+const VESSEL_SELECTED_COLOR = "#b6f4ff";
+
 const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#6ee7ff" d="M35 2l5 18 18 5v6l-18 5-5 26h-6l-5-26-18-5v-6l18-5 5-18z"/>
-    <path fill="#07111c" fill-opacity="0.32" d="M32 10l3 11 11 3-11 3-3 18-3-18-11-3 11-3z"/>
+    <path fill="#0c1016" fill-opacity="0.45" d="M32 8l8 17 16 8v5l-16 5-8 15-8-15-16-5v-5l16-8z"/>
+    <path
+      fill="#ffd54a"
+      stroke="#061019"
+      stroke-width="2"
+      stroke-linejoin="round"
+      d="M32 2l5 16 17 6v7l-16 4-7 27-5-1 4-26-9-2 1 10-4 1-4-14-13-4v-7l17-6 5-16z"
+    />
   </svg>
 `)}`;
 
 const VESSEL_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#4ade80" d="M8 38h48l-4 10-20 10L12 48z"/>
-    <path fill="#4ade80" d="M22 18h20v16H22z"/>
-    <path fill="#07111c" fill-opacity="0.28" d="M26 22h12v8H26z"/>
+    <path fill="#061019" fill-opacity="0.42" d="M8 38h48l-4 10-20 10L12 48z"/>
+    <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M9 38h46l-4 10-19 10-19-10z"/>
+    <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M22 17h20v16H22z"/>
+    <path fill="#061019" fill-opacity="0.3" d="M26 22h12v8H26z"/>
   </svg>
 `)}`;
 
@@ -69,11 +84,74 @@ function isoNowMinus(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
+function formatAltitudeFeet(altitudeMeters?: number | null): string | null {
+  if (altitudeMeters == null) return null;
+  return `${Math.round(altitudeMeters * 3.28084).toLocaleString()} ft`;
+}
+
+function formatKnots(speed?: number | null): string | null {
+  if (speed == null) return null;
+  return `${Math.round(speed)} kt`;
+}
+
 function entityLabel(entity: SelectedEntity): string {
   if (!entity) return "No selection";
   if (entity.kind === "aircraft") return entity.callsign?.trim() || entity.icao24;
   if (entity.kind === "vessel") return entity.vessel_name?.trim() || entity.mmsi;
   return entity.name;
+}
+
+function projectTrackVector(
+  lat: number,
+  lon: number,
+  headingDeg?: number | null,
+  distanceNm = 20
+): { lat: number; lon: number } | null {
+  if (headingDeg == null || Number.isNaN(headingDeg)) {
+    return null;
+  }
+
+  const earthRadiusNm = 3440.065;
+  const angularDistance = distanceNm / earthRadiusNm;
+  const bearing = CesiumMath.toRadians(headingDeg);
+  const lat1 = CesiumMath.toRadians(lat);
+  const lon1 = CesiumMath.toRadians(lon);
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angularDistance) +
+      Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing)
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
+      Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
+    );
+
+  return {
+    lat: CesiumMath.toDegrees(lat2),
+    lon: ((CesiumMath.toDegrees(lon2) + 540) % 360) - 180
+  };
+}
+
+function aircraftLabel(item: Aircraft, isSelected: boolean): string {
+  const primary = item.callsign?.trim() || item.registration?.trim() || item.icao24;
+  if (!isSelected) {
+    return primary.toUpperCase();
+  }
+
+  const secondary = [formatAltitudeFeet(item.altitude_m), formatKnots(item.velocity_kts)].filter(Boolean).join(" • ");
+  return secondary ? `${primary.toUpperCase()}\n${secondary}` : primary.toUpperCase();
+}
+
+function vesselLabel(item: Vessel, isSelected: boolean): string {
+  const primary = item.vessel_name?.trim() || item.mmsi;
+  if (!isSelected) {
+    return primary;
+  }
+
+  const secondary = [item.vessel_type?.trim(), formatKnots(item.speed_kts)].filter(Boolean).join(" • ");
+  return secondary ? `${primary}\n${secondary}` : primary;
 }
 
 function createPropertyBag(payload: GlobeEntityPayload): PropertyBag {
@@ -167,6 +245,7 @@ export default function App() {
     () => watchlists.filter((record) => selected && record.entities.some((entity) => entity.entity_id === selected.id)),
     [selected, watchlists]
   );
+  const selectedKey = selected ? `${selected.kind}:${selected.id}` : null;
 
   useEffect(() => {
     Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_ION_TOKEN ?? "";
@@ -189,6 +268,16 @@ export default function App() {
     });
 
     viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.baseColor = Color.fromCssColorString("#07101a");
+    viewer.scene.globe.showGroundAtmosphere = false;
+    viewer.scene.backgroundColor = Color.fromCssColorString("#02060b");
+    viewer.scene.skyAtmosphere.show = false;
+    if (viewer.scene.skyBox) {
+      viewer.scene.skyBox.show = false;
+    }
+    viewer.scene.sun.show = false;
+    viewer.scene.moon.show = false;
+    viewer.scene.fog.enabled = false;
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
     viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(-20, 28, 22_000_000),
@@ -241,7 +330,7 @@ export default function App() {
         setWatchlists(nextWatchlists);
         setNotes(nextNotes);
         setSavedViews(nextViews);
-        setStatus(`Tracking ${nextAircraft.length} aircraft, ${nextVessels.length} vessels, ${nextAirspace.length} overlays.`);
+        setStatus(`Live traffic: ${nextAircraft.length} airborne, ${nextVessels.length} maritime, ${nextAirspace.length} overlays.`);
       });
     } catch {
       setStatus("API unavailable. Check Eagle Eye services and VITE_API_BASE_URL.");
@@ -324,28 +413,55 @@ export default function App() {
 
     if (layers.aircraft) {
       aircraft.forEach((item) => {
+        const isSelected = selectedKey === `aircraft:${item.id}`;
+        const vectorDistanceNm = Math.max(12, Math.min(42, (item.velocity_kts ?? 280) / 12));
+        const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
         viewer.entities.add({
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
+          point: {
+            pixelSize: isSelected ? 18 : 12,
+            color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR).withAlpha(isSelected ? 0.38 : 0.18),
+            outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.3),
+            outlineWidth: isSelected ? 2 : 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
+          },
           billboard: {
             image: AIRCRAFT_ICON,
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: 0.58,
-            color: Color.fromCssColorString("#6ee7ff"),
+            scale: isSelected ? 1.24 : 0.96,
+            scaleByDistance: new NearFarScalar(200_000, 1.35, 24_000_000, 0.7),
+            color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
-          label: item.callsign?.trim()
-            ? {
-                text: item.callsign.trim(),
+          label: {
+                text: aircraftLabel(item, isSelected),
+                font: isSelected ? "600 13px IBM Plex Sans" : "600 11px IBM Plex Sans",
                 fillColor: Color.fromCssColorString("#dbe7f4"),
                 outlineColor: Color.fromCssColorString("#07111c"),
                 outlineWidth: 2,
                 style: LabelStyle.FILL_AND_OUTLINE,
-                pixelOffset: new Cartesian2(0, 18),
-                scale: 0.42,
+                showBackground: true,
+                backgroundColor: Color.fromCssColorString(isSelected ? "#152537" : "#0d1724").withAlpha(isSelected ? 0.92 : 0.78),
+                backgroundPadding: new Cartesian2(8, 6),
+                pixelOffset: new Cartesian2(0, 24),
+                scale: isSelected ? 0.84 : 0.72,
+                scaleByDistance: new NearFarScalar(180_000, 1, 6_000_000, 0.7),
+                distanceDisplayCondition: new DistanceDisplayCondition(0, isSelected ? 12_000_000 : 3_600_000),
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
+              },
+          polyline: vectorEnd
+            ? {
+                positions: [
+                  Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
+                  Cartesian3.fromDegrees(vectorEnd.lon, vectorEnd.lat, item.altitude_m ?? 0)
+                ],
+                width: isSelected ? 3 : 1.6,
+                material: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR).withAlpha(isSelected ? 0.9 : 0.48),
+                arcType: ArcType.NONE,
+                distanceDisplayCondition: new DistanceDisplayCondition(0, 9_000_000)
               }
             : undefined,
           properties: createPropertyBag({ kind: "aircraft", data: item })
@@ -355,28 +471,57 @@ export default function App() {
 
     if (layers.vessels) {
       vessels.forEach((item) => {
+        const isSelected = selectedKey === `vessel:${item.id}`;
+        const vectorDistanceNm = Math.max(2, Math.min(12, (item.speed_kts ?? 16) / 2.2));
+        const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
         viewer.entities.add({
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, 0),
+          point: {
+            pixelSize: isSelected ? 14 : 10,
+            color: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR).withAlpha(isSelected ? 0.32 : 0.16),
+            outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.28),
+            outlineWidth: 1,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
+          },
           billboard: {
             image: VESSEL_ICON,
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: 0.7,
-            color: Color.fromCssColorString("#4ade80"),
+            scale: isSelected ? 1.06 : 0.84,
+            scaleByDistance: new NearFarScalar(200_000, 1.2, 24_000_000, 0.6),
+            color: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
-          label: item.vessel_name?.trim()
+          label: item.vessel_name?.trim() || isSelected
             ? {
-                text: item.vessel_name.trim(),
+                text: vesselLabel(item, isSelected),
+                font: isSelected ? "600 12px IBM Plex Sans" : "600 10px IBM Plex Sans",
                 fillColor: Color.fromCssColorString("#dbe7f4"),
                 outlineColor: Color.fromCssColorString("#07111c"),
                 outlineWidth: 2,
                 style: LabelStyle.FILL_AND_OUTLINE,
-                pixelOffset: new Cartesian2(0, 18),
-                scale: 0.42,
+                showBackground: true,
+                backgroundColor: Color.fromCssColorString("#0d1724").withAlpha(isSelected ? 0.92 : 0.76),
+                backgroundPadding: new Cartesian2(8, 5),
+                pixelOffset: new Cartesian2(0, 22),
+                scale: isSelected ? 0.8 : 0.68,
+                scaleByDistance: new NearFarScalar(150_000, 1, 5_000_000, 0.65),
+                distanceDisplayCondition: new DistanceDisplayCondition(0, isSelected ? 10_000_000 : 2_500_000),
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
+          polyline: vectorEnd
+            ? {
+                positions: [
+                  Cartesian3.fromDegrees(item.lon, item.lat, 0),
+                  Cartesian3.fromDegrees(vectorEnd.lon, vectorEnd.lat, 0)
+                ],
+                width: isSelected ? 2.4 : 1.2,
+                material: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR).withAlpha(isSelected ? 0.72 : 0.32),
+                arcType: ArcType.NONE,
+                distanceDisplayCondition: new DistanceDisplayCondition(0, 5_500_000)
               }
             : undefined,
           properties: createPropertyBag({ kind: "vessel", data: item })
@@ -386,16 +531,19 @@ export default function App() {
 
     [...aircraftTracks, ...vesselTracks].forEach((track) => {
       if (track.points.length < 2) return;
+      const isSelected = selected && track.entity_kind === selected.kind && track.entity_id === selected.id;
       viewer.entities.add({
         id: `${track.entity_kind}:${track.entity_id}:track`,
         polyline: {
           positions: track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat, point.altitude_m ?? 0)),
-          width: 2,
-          material: Color.fromCssColorString(track.entity_kind === "aircraft" ? "#6ee7ff" : "#4ade80")
+          width: isSelected ? 4 : 2.2,
+          material: Color.fromCssColorString(track.entity_kind === "aircraft" ? AIRCRAFT_COLOR : VESSEL_COLOR).withAlpha(
+            isSelected ? 0.95 : 0.55
+          )
         }
       });
     });
-  }, [aircraft, vessels, aircraftTracks, vesselTracks, layers.aircraft, layers.vessels]);
+  }, [aircraft, vessels, aircraftTracks, vesselTracks, layers.aircraft, layers.vessels, selected, selectedKey]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -667,9 +815,34 @@ export default function App() {
 
         <section className="globe-shell panel">
           <div ref={viewerHostRef} className="globe-host" />
+          <div className="tracker-hud">
+            <div className="tracker-badge">LIVE TRAFFIC PICTURE</div>
+            <div className="tracker-metrics">
+              <div className="tracker-metric">
+                <strong>{aircraft.length.toLocaleString()}</strong>
+                <span>Aircraft</span>
+              </div>
+              <div className="tracker-metric">
+                <strong>{vessels.length.toLocaleString()}</strong>
+                <span>Vessels</span>
+              </div>
+              <div className="tracker-metric">
+                <strong>{airspace.length.toLocaleString()}</strong>
+                <span>Airspace</span>
+              </div>
+            </div>
+            <div className="tracker-focus">
+              <span className="muted">Focus</span>
+              <strong>{selected ? entityLabel(selected) : "Global traffic"}</strong>
+            </div>
+          </div>
           <div className="layer-strip">
             {layerDefinitions.map((layer) => (
-              <label key={layer.key} className={`layer-chip ${layer.disabled ? "disabled" : ""}`}>
+              <label
+                key={layer.key}
+                className={`layer-chip ${layer.disabled ? "disabled" : ""}`}
+                style={{ "--layer-color": layer.color } as CSSProperties}
+              >
                 <input
                   type="checkbox"
                   checked={layers[layer.key]}
@@ -739,7 +912,13 @@ export default function App() {
                   <div><span>Source</span><strong>{selected.source}</strong></div>
                   {"observed_at" in selected ? <div><span>Observed</span><strong>{selected.observed_at}</strong></div> : null}
                   {"lat" in selected ? <div><span>Coordinates</span><strong>{selected.lat.toFixed(3)}, {selected.lon.toFixed(3)}</strong></div> : null}
+                  {"altitude_m" in selected ? <div><span>Altitude</span><strong>{formatAltitudeFeet(selected.altitude_m) ?? "n/a"}</strong></div> : null}
+                  {"velocity_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.velocity_kts) ?? "n/a"}</strong></div> : null}
+                  {"speed_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.speed_kts) ?? "n/a"}</strong></div> : null}
                   {"heading_deg" in selected ? <div><span>Heading</span><strong>{selected.heading_deg ?? "n/a"}°</strong></div> : null}
+                  {"registration" in selected ? <div><span>Registration</span><strong>{selected.registration ?? "n/a"}</strong></div> : null}
+                  {"operator" in selected ? <div><span>Operator</span><strong>{selected.operator ?? "n/a"}</strong></div> : null}
+                  {"vessel_type" in selected ? <div><span>Type</span><strong>{selected.vessel_type ?? "n/a"}</strong></div> : null}
                 </>
               ) : (
                 <p className="muted">Analyst context appears here when an entity is selected.</p>
