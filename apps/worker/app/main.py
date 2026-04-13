@@ -115,10 +115,6 @@ SATELLITE_DDL = (
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_satellites_current_geom ON satellites_current USING GIST (geom)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_current_observed_at ON satellites_current (observed_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_current_norad ON satellites_current (norad_cat_id)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_current_group ON satellites_current (group_name)",
     """
     CREATE TABLE IF NOT EXISTS satellites_history (
       history_id BIGSERIAL PRIMARY KEY,
@@ -159,10 +155,6 @@ SATELLITE_DDL = (
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_satellites_history_entity_time ON satellites_history (entity_id, observed_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_history_norad_time ON satellites_history (norad_cat_id, observed_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_history_observed_at ON satellites_history (observed_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_satellites_history_geom ON satellites_history USING GIST (geom)",
     """
     CREATE TABLE IF NOT EXISTS satellite_source_snapshots (
       snapshot_id UUID PRIMARY KEY,
@@ -216,6 +208,14 @@ SATELLITE_DDL = (
     "ALTER TABLE satellites_history ADD COLUMN IF NOT EXISTS computed_velocity_kms DOUBLE PRECISION",
     "ALTER TABLE satellites_history ADD COLUMN IF NOT EXISTS playback_confidence DOUBLE PRECISION",
     "ALTER TABLE satellites_history ADD COLUMN IF NOT EXISTS source_snapshot_id UUID",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_geom ON satellites_current USING GIST (geom)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_observed_at ON satellites_current (observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_norad ON satellites_current (norad_cat_id)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_group ON satellites_current (group_name)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_entity_time ON satellites_history (entity_id, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_norad_time ON satellites_history (norad_cat_id, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_observed_at ON satellites_history (observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_geom ON satellites_history USING GIST (geom)",
     """
     UPDATE satellites_current
     SET
