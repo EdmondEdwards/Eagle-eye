@@ -9,6 +9,7 @@ COPY packages/shared-types/package.json /app/packages/shared-types/package.json
 COPY packages/ui/package.json /app/packages/ui/package.json
 
 RUN npm install
+RUN ln -s /app/node_modules /app/apps/web/node_modules
 
 COPY apps/web /app/apps/web
 COPY packages/shared-types /app/packages/shared-types
@@ -29,4 +30,3 @@ COPY --from=build /app/apps/web/dist /usr/share/nginx/html
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-
