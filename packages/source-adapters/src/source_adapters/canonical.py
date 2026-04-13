@@ -9,6 +9,14 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _serialize(payload: dict[str, Any], *date_keys: str) -> dict[str, Any]:
+    for key in date_keys:
+        value = payload.get(key)
+        if isinstance(value, datetime):
+            payload[key] = value.isoformat()
+    return payload
+
+
 @dataclass(slots=True)
 class AircraftSnapshot:
     id: str
@@ -29,9 +37,7 @@ class AircraftSnapshot:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["observed_at"] = self.observed_at.isoformat()
-        return payload
+        return _serialize(asdict(self), "observed_at")
 
 
 @dataclass(slots=True)
@@ -53,34 +59,111 @@ class VesselSnapshot:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["observed_at"] = self.observed_at.isoformat()
-        return payload
+        return _serialize(asdict(self), "observed_at")
 
 
 @dataclass(slots=True)
-class SatelliteSnapshot:
+class SatelliteCatalogRecord:
     id: str
-    catalog_number: str
-    satellite_name: str
+    norad_cat_id: str
     international_designator: str | None
-    group_name: str | None
+    name: str
+    object_type: str | None
     orbit_class: str | None
-    lat: float
-    lon: float
-    altitude_m: float | None
-    velocity_kts: float | None
-    tle_epoch: datetime | None = None
-    source: str = "celestrak"
+    source: str
+    tle_line1: str | None
+    tle_line2: str | None
+    epoch: datetime | None
+    inclination_deg: float | None
+    eccentricity: float | None
+    mean_motion: float | None
+    raan_deg: float | None
+    arg_perigee_deg: float | None
+    mean_anomaly_deg: float | None
+    bstar: float | None
     source_confidence: float = 0.74
+    observed_at: datetime = field(default_factory=utc_now)
+    group_name: str | None = None
+    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "epoch", "observed_at")
+
+
+@dataclass(slots=True)
+class SatelliteSourceSnapshotRecord:
+    snapshot_id: str
+    satellite_id: str
+    norad_cat_id: str
+    provider: str
+    group_name: str | None
+    payload_format: str
+    epoch: datetime | None
     observed_at: datetime = field(default_factory=utc_now)
     raw_reference: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "epoch", "observed_at")
+
+
+@dataclass(slots=True)
+class SatelliteSnapshot:
+    id: str
+    norad_cat_id: str
+    international_designator: str | None
+    name: str
+    object_type: str | None
+    orbit_class: str | None
+    source: str
+    tle_line1: str | None
+    tle_line2: str | None
+    epoch: datetime | None
+    inclination_deg: float | None
+    eccentricity: float | None
+    mean_motion: float | None
+    raan_deg: float | None
+    arg_perigee_deg: float | None
+    mean_anomaly_deg: float | None
+    bstar: float | None
+    source_confidence: float
+    observed_at: datetime
+    computed_lat: float
+    computed_lon: float
+    computed_alt_km: float | None
+    computed_velocity_kms: float | None
+    group_name: str | None = None
+    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+    playback_confidence: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "epoch", "observed_at")
+
+
+@dataclass(slots=True)
+class OrbitSample:
+    observed_at: datetime
+    lat: float
+    lon: float
+    alt_km: float | None
+    velocity_kms: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "observed_at")
+
+
+@dataclass(slots=True)
+class SatelliteIngestResult:
+    provider: str
+    catalog_records: list[SatelliteCatalogRecord]
+    source_snapshots: list[SatelliteSourceSnapshotRecord]
+    observed_at: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["observed_at"] = self.observed_at.isoformat()
-        payload["tle_epoch"] = self.tle_epoch.isoformat() if self.tle_epoch else None
         return payload
 
 
@@ -100,11 +183,7 @@ class AirspaceOverlayRecord:
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        payload = asdict(self)
-        payload["observed_at"] = self.observed_at.isoformat()
-        payload["active_from"] = self.active_from.isoformat() if self.active_from else None
-        payload["active_to"] = self.active_to.isoformat() if self.active_to else None
-        return payload
+        return _serialize(asdict(self), "active_from", "active_to", "observed_at")
 
 
 @dataclass(slots=True)

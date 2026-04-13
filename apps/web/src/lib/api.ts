@@ -4,10 +4,12 @@ import type {
   CaseRecord,
   LiveEnvelope,
   NoteRecord,
+  OrbitPathResponse,
   SavedViewRecord,
-    SearchResult,
-    Satellite,
-    TagRecord,
+  SearchResult,
+  Satellite,
+  SatelliteCatalogRecord,
+  TagRecord,
   TimelineResponse,
   Vessel,
   WatchlistRecord
@@ -51,6 +53,17 @@ export const api = {
     requestJson<Satellite[]>(`/api/satellites/current?limit=2500${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getSatellitesHistory: (params: URLSearchParams) =>
     requestJson<TimelineResponse>(`/api/satellites/history?${params.toString()}`),
+  getSatelliteCatalog: (params?: URLSearchParams) =>
+    requestJson<SatelliteCatalogRecord[]>(`/api/satellites/catalog${params ? `?${params.toString()}` : ""}`),
+  getSatellite: (noradCatId: string) => requestJson<Satellite>(`/api/satellites/${encodeURIComponent(noradCatId)}`),
+  getSatelliteOrbit: (noradCatId: string, params?: URLSearchParams) =>
+    requestJson<OrbitPathResponse>(
+      `/api/satellites/${encodeURIComponent(noradCatId)}/orbit${params ? `?${params.toString()}` : ""}`
+    ),
+  searchSatellites: (query: string, group?: string) =>
+    requestJson<SearchResult[]>(
+      `/api/satellites/search?q=${encodeURIComponent(query)}${group ? `&group=${encodeURIComponent(group)}` : ""}`
+    ),
   getAirspaceCurrent: () => requestJson<AirspaceOverlay[]>("/api/airspace/current"),
   getCases: () => requestJson<CaseRecord[]>("/api/cases"),
   createCase: (payload: Partial<CaseRecord>) =>

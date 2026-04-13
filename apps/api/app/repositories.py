@@ -23,6 +23,7 @@ from .schemas import (
     WatchlistEntityCreate,
     WatchlistUpdate,
 )
+from .services.satellite_propagation_service import orbit_path_from_row, playback_from_rows
 
 COORDINATE_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$")
 
@@ -103,34 +104,187 @@ def list_vessels_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
     )
 
 
-def list_satellites_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
+def _build_satellite_filters(
+    bbox: str | None,
+    *,
+    norad_cat_id: str | None = None,
+    name: str | None = None,
+    group: str | None = None,
+) -> tuple[str, dict[str, Any]]:
     bbox_clause, bbox_params = _build_envelope_clause(bbox)
+    clauses = [bbox_clause]
+    params: dict[str, Any] = {**bbox_params}
+    if norad_cat_id:
+        clauses.append("AND norad_cat_id = :norad_cat_id")
+        params["norad_cat_id"] = norad_cat_id
+    if name:
+        clauses.append("AND LOWER(name) LIKE :name")
+        params["name"] = f"%{name.lower()}%"
+    if group:
+        clauses.append("AND LOWER(COALESCE(group_name, '')) = :group_name")
+        params["group_name"] = group.lower()
+    return "\n".join(filter(None, clauses)), params
+
+
+def list_satellites_current(
+    bbox: str | None,
+    limit: int,
+    *,
+    norad_cat_id: str | None = None,
+    name: str | None = None,
+    group: str | None = None,
+) -> list[dict[str, Any]]:
+    where_clause, params = _build_satellite_filters(bbox, norad_cat_id=norad_cat_id, name=name, group=group)
     return fetch_all(
         f"""
         SELECT
           id,
-          catalog_number,
-          satellite_name,
+          norad_cat_id,
           international_designator,
+          name,
+          object_type,
           group_name,
           orbit_class,
-          ST_Y(geom) AS lat,
-          ST_X(geom) AS lon,
-          altitude_m,
-          velocity_kts,
-          tle_epoch,
+          tle_line1,
+          tle_line2,
+          epoch,
+          inclination_deg,
+          eccentricity,
+          mean_motion,
+          raan_deg,
+          arg_perigee_deg,
+          mean_anomaly_deg,
+          bstar,
+          computed_lat,
+          computed_lon,
+          computed_alt_km,
+          computed_velocity_kms,
           source,
           source_confidence,
           observed_at,
           raw_reference
         FROM satellites_current
         WHERE 1 = 1
-        {bbox_clause}
-        ORDER BY observed_at DESC, satellite_name ASC
+        {where_clause}
+        ORDER BY observed_at DESC, name ASC
         LIMIT :limit
         """,
-        {**bbox_params, "limit": limit},
+        {**params, "limit": limit},
     )
+
+
+def list_satellites_catalog(
+    *,
+    limit: int,
+    norad_cat_id: str | None = None,
+    name: str | None = None,
+    group: str | None = None,
+    object_type: str | None = None,
+    orbit_class: str | None = None,
+) -> list[dict[str, Any]]:
+    clauses = []
+    params: dict[str, Any] = {"limit": limit}
+    if norad_cat_id:
+        clauses.append("AND norad_cat_id = :norad_cat_id")
+        params["norad_cat_id"] = norad_cat_id
+    if name:
+        clauses.append("AND LOWER(name) LIKE :name")
+        params["name"] = f"%{name.lower()}%"
+    if group:
+        clauses.append("AND LOWER(COALESCE(group_name, '')) = :group_name")
+        params["group_name"] = group.lower()
+    if object_type:
+        clauses.append("AND LOWER(COALESCE(object_type, '')) = :object_type")
+        params["object_type"] = object_type.lower()
+    if orbit_class:
+        clauses.append("AND LOWER(COALESCE(orbit_class, '')) = :orbit_class")
+        params["orbit_class"] = orbit_class.lower()
+
+    return fetch_all(
+        f"""
+        SELECT
+          id,
+          norad_cat_id,
+          international_designator,
+          name,
+          object_type,
+          group_name,
+          orbit_class,
+          source,
+          tle_line1,
+          tle_line2,
+          epoch,
+          inclination_deg,
+          eccentricity,
+          mean_motion,
+          raan_deg,
+          arg_perigee_deg,
+          mean_anomaly_deg,
+          bstar,
+          source_confidence,
+          observed_at,
+          raw_reference
+        FROM satellites_catalog
+        WHERE 1 = 1
+        {' '.join(clauses)}
+        ORDER BY observed_at DESC, name ASC
+        LIMIT :limit
+        """,
+        params,
+    )
+
+
+def get_satellite(norad_cat_id: str) -> dict[str, Any] | None:
+    record = fetch_one(
+        """
+        SELECT
+          c.id,
+          c.norad_cat_id,
+          c.international_designator,
+          c.name,
+          c.object_type,
+          c.group_name,
+          COALESCE(cur.orbit_class, c.orbit_class) AS orbit_class,
+          COALESCE(cur.source, c.source) AS source,
+          c.tle_line1,
+          c.tle_line2,
+          c.epoch,
+          c.inclination_deg,
+          c.eccentricity,
+          c.mean_motion,
+          c.raan_deg,
+          c.arg_perigee_deg,
+          c.mean_anomaly_deg,
+          c.bstar,
+          COALESCE(cur.source_confidence, c.source_confidence) AS source_confidence,
+          COALESCE(cur.observed_at, c.observed_at) AS observed_at,
+          cur.computed_lat,
+          cur.computed_lon,
+          cur.computed_alt_km,
+          cur.computed_velocity_kms,
+          COALESCE(cur.raw_reference, c.raw_reference) AS raw_reference
+        FROM satellites_catalog c
+        LEFT JOIN satellites_current cur ON cur.norad_cat_id = c.norad_cat_id
+        WHERE c.norad_cat_id = :norad_cat_id
+        """,
+        {"norad_cat_id": norad_cat_id},
+    )
+    if not record:
+        return None
+    if record.get("computed_lat") is None or record.get("computed_lon") is None:
+        current_path = orbit_path_from_row(
+            record,
+            start=datetime.now(timezone.utc),
+            minutes_ahead=5,
+            step_seconds=300,
+        )
+        if current_path:
+            first_point = current_path[0].to_dict()
+            record["computed_lat"] = first_point["lat"]
+            record["computed_lon"] = first_point["lon"]
+            record["computed_alt_km"] = first_point.get("alt_km")
+            record["computed_velocity_kms"] = first_point.get("velocity_kms")
+    return record
 
 
 def list_airspace_current(at: datetime | None) -> list[dict[str, Any]]:
@@ -233,9 +387,18 @@ def vessel_history(since: datetime, until: datetime, bbox: str | None, entity_id
     return _history_query("vessels_history", "vessel", since, until, bbox, entity_id, limit)
 
 
-def satellite_history(since: datetime, until: datetime, bbox: str | None, entity_id: str | None, limit: int) -> dict[str, Any]:
+def satellite_history(
+    since: datetime,
+    until: datetime,
+    bbox: str | None,
+    entity_id: str | None,
+    limit: int,
+    *,
+    norad_cat_id: str | None = None,
+) -> dict[str, Any]:
     bbox_clause, bbox_params = _build_envelope_clause(bbox)
-    entity_clause = "AND entity_id = :entity_id" if entity_id else ""
+    norad_cat_id = norad_cat_id or (entity_id.replace("satellite:", "", 1) if entity_id and entity_id.startswith("satellite:") else None)
+    clauses = [bbox_clause]
     params: dict[str, Any] = {
         "since": since.isoformat(),
         "until": until.isoformat(),
@@ -243,23 +406,27 @@ def satellite_history(since: datetime, until: datetime, bbox: str | None, entity
         **bbox_params,
     }
     if entity_id:
+        clauses.append("AND entity_id = :entity_id")
         params["entity_id"] = entity_id
+    if norad_cat_id:
+        clauses.append("AND norad_cat_id = :norad_cat_id")
+        params["norad_cat_id"] = norad_cat_id
 
     rows = fetch_all(
         f"""
         SELECT
           entity_id,
-          ST_Y(geom) AS lat,
-          ST_X(geom) AS lon,
+          norad_cat_id,
+          computed_lat AS lat,
+          computed_lon AS lon,
           observed_at,
-          altitude_m,
-          velocity_kts,
-          satellite_name,
-          catalog_number
+          computed_alt_km,
+          computed_velocity_kms,
+          playback_confidence,
+          name
         FROM satellites_history
         WHERE observed_at BETWEEN :since AND :until
-        {entity_clause}
-        {bbox_clause}
+        {' '.join(filter(None, clauses))}
         ORDER BY entity_id, observed_at ASC
         LIMIT :limit
         """,
@@ -268,7 +435,7 @@ def satellite_history(since: datetime, until: datetime, bbox: str | None, entity
 
     tracks: dict[str, dict[str, Any]] = {}
     for row in rows:
-        label = row.get("satellite_name") or row.get("catalog_number") or row["entity_id"]
+        label = row.get("name") or row.get("norad_cat_id") or row["entity_id"]
         track = tracks.setdefault(
             row["entity_id"],
             {
@@ -283,15 +450,153 @@ def satellite_history(since: datetime, until: datetime, bbox: str | None, entity
                 "lat": row["lat"],
                 "lon": row["lon"],
                 "observed_at": row["observed_at"],
-                "altitude_m": row.get("altitude_m"),
-                "velocity_kts": row.get("velocity_kts"),
+                "alt_km": row.get("computed_alt_km"),
+                "velocity_kms": row.get("computed_velocity_kms"),
+                "confidence": row.get("playback_confidence"),
             }
         )
 
+    if tracks:
+        return {
+            "window": {"from": since, "to": until},
+            "tracks": list(tracks.values()),
+        }
+
+    if not norad_cat_id:
+        return {
+            "window": {"from": since, "to": until},
+            "tracks": [],
+        }
+
+    snapshot_rows = fetch_all(
+        """
+        SELECT
+          sc.id,
+          sc.norad_cat_id,
+          sc.international_designator,
+          sc.name,
+          sc.object_type,
+          sc.group_name,
+          sc.orbit_class,
+          sc.source,
+          sc.tle_line1,
+          sc.tle_line2,
+          sc.epoch,
+          sc.inclination_deg,
+          sc.eccentricity,
+          sc.mean_motion,
+          sc.raan_deg,
+          sc.arg_perigee_deg,
+          sc.mean_anomaly_deg,
+          sc.bstar,
+          sc.source_confidence,
+          ss.observed_at,
+          sc.raw_reference,
+          COALESCE(ss.raw_payload, sc.raw_payload) AS raw_payload
+        FROM satellites_catalog sc
+        LEFT JOIN satellite_source_snapshots ss ON ss.norad_cat_id = sc.norad_cat_id
+        WHERE sc.norad_cat_id = :norad_cat_id
+        ORDER BY ss.observed_at DESC NULLS LAST
+        LIMIT 4
+        """,
+        {"norad_cat_id": norad_cat_id},
+    )
+    if not snapshot_rows:
+        return {
+            "window": {"from": since, "to": until},
+            "tracks": [],
+        }
+
+    playback_step_seconds = max(60, int((until - since).total_seconds() / 48) if until > since else 60)
+    points = [
+        point.to_dict()
+        for point in playback_from_rows(snapshot_rows, since=since, until=until, step_seconds=playback_step_seconds)
+    ]
+
     return {
         "window": {"from": since, "to": until},
-        "tracks": list(tracks.values()),
+        "tracks": [
+            {
+                "entity_id": f"satellite:{norad_cat_id}",
+                "label": snapshot_rows[0]["name"],
+                "entity_kind": "satellite",
+                "points": points,
+            }
+        ],
     }
+
+
+def satellite_orbit(norad_cat_id: str, *, start: datetime, minutes_ahead: int, step_seconds: int) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT
+          id,
+          norad_cat_id,
+          international_designator,
+          name,
+          object_type,
+          group_name,
+          orbit_class,
+          source,
+          tle_line1,
+          tle_line2,
+          epoch,
+          inclination_deg,
+          eccentricity,
+          mean_motion,
+          raan_deg,
+          arg_perigee_deg,
+          mean_anomaly_deg,
+          bstar,
+          source_confidence,
+          observed_at,
+          raw_reference,
+          raw_payload
+        FROM satellites_catalog
+        WHERE norad_cat_id = :norad_cat_id
+        """,
+        {"norad_cat_id": norad_cat_id},
+    )
+    if not row:
+        return None
+
+    return {
+        "norad_cat_id": norad_cat_id,
+        "source": row["source"],
+        "epoch": row.get("epoch"),
+        "points": [point.to_dict() for point in orbit_path_from_row(row, start=start, minutes_ahead=minutes_ahead, step_seconds=step_seconds)],
+    }
+
+
+def satellite_search(query: str, group: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    like = f"%{query.lower()}%"
+    params: dict[str, Any] = {"like": like, "limit": limit}
+    group_clause = ""
+    if group:
+        group_clause = "AND LOWER(COALESCE(group_name, '')) = :group_name"
+        params["group_name"] = group.lower()
+    return fetch_all(
+        f"""
+        SELECT
+          'satellite' AS kind,
+          id,
+          name AS label,
+          COALESCE(group_name, norad_cat_id) AS subtitle,
+          source,
+          observed_at,
+          json_build_object('lat', computed_lat, 'lon', computed_lon) AS location
+        FROM satellites_current
+        WHERE (
+          LOWER(name) LIKE :like
+          OR LOWER(norad_cat_id) LIKE :like
+          OR LOWER(COALESCE(international_designator, '')) LIKE :like
+        )
+        {group_clause}
+        ORDER BY observed_at DESC
+        LIMIT :limit
+        """,
+        params,
+    )
 
 
 def _group_entities(rows: list[dict[str, Any]], key_name: str) -> dict[str, list[dict[str, Any]]]:
@@ -602,7 +907,7 @@ def search(query: str) -> list[dict[str, Any]]:
         )
         nearby_satellites = fetch_all(
             """
-            SELECT id, satellite_name AS label, source, observed_at, ST_Y(geom) AS lat, ST_X(geom) AS lon
+            SELECT id, name AS label, source, observed_at, computed_lat AS lat, computed_lon AS lon
             FROM satellites_current
             WHERE ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, 175000)
             ORDER BY observed_at DESC
@@ -653,12 +958,12 @@ def search(query: str) -> list[dict[str, Any]]:
     results.extend(
         fetch_all(
             """
-            SELECT 'satellite' AS kind, id, satellite_name AS label,
-            COALESCE(group_name, catalog_number) AS subtitle, source, observed_at,
-            json_build_object('lat', ST_Y(geom), 'lon', ST_X(geom)) AS location
+            SELECT 'satellite' AS kind, id, name AS label,
+            COALESCE(group_name, norad_cat_id) AS subtitle, source, observed_at,
+            json_build_object('lat', computed_lat, 'lon', computed_lon) AS location
             FROM satellites_current
-            WHERE LOWER(satellite_name) LIKE :like
-               OR LOWER(catalog_number) LIKE :like
+            WHERE LOWER(name) LIKE :like
+               OR LOWER(norad_cat_id) LIKE :like
                OR LOWER(COALESCE(international_designator, '')) LIKE :like
                OR LOWER(COALESCE(group_name, '')) LIKE :like
             ORDER BY observed_at DESC

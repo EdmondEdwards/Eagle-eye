@@ -27,6 +27,7 @@ import type {
     SavedViewRecord,
     SearchResult,
     Satellite,
+    TimelinePoint,
     TimelineTrack,
     Vessel,
     WatchlistRecord
@@ -136,11 +137,16 @@ function formatAltitudeKm(altitudeMeters?: number | null): string | null {
   return `${(altitudeMeters / 1000).toFixed(0)} km`;
 }
 
+function formatVelocityKms(speed?: number | null): string | null {
+  if (speed == null) return null;
+  return `${speed.toFixed(2)} km/s`;
+}
+
 function entityLabel(entity: SelectedEntity): string {
   if (!entity) return "No selection";
   if (entity.kind === "aircraft") return entity.callsign?.trim() || entity.icao24;
   if (entity.kind === "vessel") return entity.vessel_name?.trim() || entity.mmsi;
-  if (entity.kind === "satellite") return entity.satellite_name?.trim() || entity.catalog_number;
+  if (entity.kind === "satellite") return entity.name?.trim() || entity.norad_cat_id;
   return entity.name;
 }
 
@@ -199,10 +205,16 @@ function vesselLabel(item: Vessel, isSelected: boolean): string {
 
 function satelliteLabel(item: Satellite, isSelected: boolean): string {
   if (!isSelected) {
-    return item.satellite_name;
+    return item.name;
   }
-  const secondary = [item.orbit_class, formatAltitudeKm(item.altitude_m)].filter(Boolean).join(" • ");
-  return secondary ? `${item.satellite_name}\n${secondary}` : item.satellite_name;
+  const secondary = [item.orbit_class, formatAltitudeKm(item.computed_alt_km != null ? item.computed_alt_km * 1000 : null)].filter(Boolean).join(" • ");
+  return secondary ? `${item.name}\n${secondary}` : item.name;
+}
+
+function pointAltitudeMeters(point: TimelinePoint): number {
+  if (point.altitude_m != null) return point.altitude_m;
+  if (point.alt_km != null) return point.alt_km * 1000;
+  return 0;
 }
 
 function centroidFromAirspace(overlay: AirspaceOverlay): { lat: number; lon: number } | null {
@@ -387,13 +399,13 @@ function isSatellitePayload(payload: unknown): payload is Satellite {
   const value = payload as Record<string, unknown>;
   return (
     typeof value.id === "string" &&
-    typeof value.catalog_number === "string" &&
-    typeof value.satellite_name === "string" &&
+    typeof value.norad_cat_id === "string" &&
+    typeof value.name === "string" &&
     typeof value.source === "string" &&
     typeof value.source_confidence === "number" &&
     typeof value.observed_at === "string" &&
-    typeof value.lat === "number" &&
-    typeof value.lon === "number"
+    typeof value.computed_lat === "number" &&
+    typeof value.computed_lon === "number"
   );
 }
 
@@ -435,14 +447,19 @@ function focusEntityInViewer(viewer: Viewer, entity: SelectedEntity): boolean {
     return false;
   }
 
+  if (entity.kind === "satellite") {
+    flyCameraToLocation(viewer, entity.computed_lat, entity.computed_lon, 2_200_000, 0, -74, 1.2);
+    return true;
+  }
+
   if ("lat" in entity) {
     flyCameraToLocation(
       viewer,
       entity.lat,
       entity.lon,
-      entity.kind === "aircraft" ? 1_050_000 : entity.kind === "satellite" ? 2_200_000 : 1_400_000,
+      entity.kind === "aircraft" ? 1_050_000 : 1_400_000,
       "heading_deg" in entity ? entity.heading_deg ?? 0 : 0,
-      entity.kind === "aircraft" ? -66 : entity.kind === "satellite" ? -74 : -69,
+      entity.kind === "aircraft" ? -66 : -69,
       1.2
     );
     return true;
@@ -481,6 +498,7 @@ export default function App() {
   const [aircraftTracks, setAircraftTracks] = useState<TimelineTrack[]>([]);
   const [vesselTracks, setVesselTracks] = useState<TimelineTrack[]>([]);
   const [satelliteTracks, setSatelliteTracks] = useState<TimelineTrack[]>([]);
+  const [satelliteOrbitPoints, setSatelliteOrbitPoints] = useState<TimelinePoint[]>([]);
   const [status, setStatus] = useState("Loading operational picture...");
   const [activePreset, setActivePreset] = useState<string>("global");
   const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
@@ -515,7 +533,7 @@ export default function App() {
     [vessels, viewBounds]
   );
   const visibleSatellites = useMemo(
-    () => satellites.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 1000),
+    () => satellites.filter((item) => isPointInView(item.computed_lat, item.computed_lon, viewBounds)).slice(0, 1000),
     [satellites, viewBounds]
   );
   const aircraftRenderBudget = cameraHeight >= 12_000_000 ? 900 : cameraHeight >= 5_500_000 ? 1_500 : 2_200;
@@ -578,7 +596,9 @@ export default function App() {
     const entities = [...visibleAircraft, ...visibleVessels, ...visibleSatellites];
     if (entities.length === 0) return;
 
-    const sampled = entities.slice(0, 250);
+    const sampled = entities.slice(0, 250).map((item) =>
+      "computed_lat" in item ? { lat: item.computed_lat, lon: item.computed_lon } : { lat: item.lat, lon: item.lon }
+    );
     const latMin = Math.min(...sampled.map((item) => item.lat));
     const latMax = Math.max(...sampled.map((item) => item.lat));
     const lonMin = Math.min(...sampled.map((item) => item.lon));
@@ -917,7 +937,7 @@ export default function App() {
         const isSelected = selectedKey === `satellite:${item.id}`;
         viewer.entities.add({
           id: item.id,
-          position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
+          position: Cartesian3.fromDegrees(item.computed_lon, item.computed_lat, (item.computed_alt_km ?? 0) * 1000),
           point: isSelected
             ? {
                 pixelSize: 9,
@@ -959,13 +979,24 @@ export default function App() {
       });
     }
 
+    if (layers.satellites && selected?.kind === "satellite" && satelliteOrbitPoints.length > 1) {
+      viewer.entities.add({
+        id: `satellite:${selected.norad_cat_id}:orbit`,
+        polyline: {
+          positions: satelliteOrbitPoints.map((point) => Cartesian3.fromDegrees(point.lon, point.lat, pointAltitudeMeters(point))),
+          width: 2.6,
+          material: Color.fromCssColorString(SATELLITE_SELECTED_COLOR).withAlpha(0.9)
+        }
+      });
+    }
+
     [...aircraftTracks, ...vesselTracks, ...satelliteTracks].forEach((track) => {
       if (track.points.length < 2) return;
       const isSelected = Boolean(selected && track.entity_kind === selected.kind && track.entity_id === selected.id);
       viewer.entities.add({
         id: `${track.entity_kind}:${track.entity_id}:track`,
         polyline: {
-          positions: track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat, point.altitude_m ?? 0)),
+          positions: track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat, pointAltitudeMeters(point))),
           width: isSelected ? 4 : 2.2,
           material: Color.fromCssColorString(
             track.entity_kind === "aircraft" ? AIRCRAFT_COLOR : track.entity_kind === "satellite" ? SATELLITE_COLOR : VESSEL_COLOR
@@ -983,6 +1014,7 @@ export default function App() {
     renderedSatellites,
     renderedVessels,
     satelliteLabelsEnabled,
+    satelliteOrbitPoints,
     satelliteTracks,
     selected,
     selectedKey,
@@ -1048,8 +1080,13 @@ export default function App() {
       setAircraftTracks([]);
       setVesselTracks([]);
       setSatelliteTracks([]);
+      if (!selected || selected.kind !== "satellite") {
+        setSatelliteOrbitPoints([]);
+      }
       return;
     }
+
+    setSatelliteOrbitPoints([]);
 
     const params = new URLSearchParams({
       since: isoNowMinus(timelineMinutes),
@@ -1067,6 +1104,7 @@ export default function App() {
 
   useEffect(() => {
     if (timelineMode !== "live" || !selected) {
+      setSatelliteOrbitPoints([]);
       return;
     }
 
@@ -1083,6 +1121,7 @@ export default function App() {
           setAircraftTracks(history.tracks.slice(0, 1));
           setVesselTracks([]);
           setSatelliteTracks([]);
+          setSatelliteOrbitPoints([]);
           return;
         }
         if (selected.kind === "vessel") {
@@ -1090,18 +1129,28 @@ export default function App() {
           setAircraftTracks([]);
           setVesselTracks(history.tracks.slice(0, 1));
           setSatelliteTracks([]);
+          setSatelliteOrbitPoints([]);
           return;
         }
         if (selected.kind === "satellite") {
-          const history = await api.getSatellitesHistory(params);
+          const orbitParams = new URLSearchParams({
+            minutes_ahead: "120",
+            step_seconds: "120",
+          });
+          const [history, orbit] = await Promise.all([
+            api.getSatellitesHistory(params),
+            api.getSatelliteOrbit(selected.norad_cat_id, orbitParams),
+          ]);
           setAircraftTracks([]);
           setVesselTracks([]);
           setSatelliteTracks(history.tracks.slice(0, 1));
+          setSatelliteOrbitPoints(orbit.points);
           return;
         }
         setAircraftTracks([]);
         setVesselTracks([]);
         setSatelliteTracks([]);
+        setSatelliteOrbitPoints([]);
       } catch {
         setStatus("Focused track history is unavailable right now.");
       }
@@ -1282,7 +1331,7 @@ export default function App() {
           <div className="command-bar">
             <input
               value={searchQuery}
-              placeholder="Search callsign, ICAO24, MMSI, place name, or coordinates"
+              placeholder="Search callsign, ICAO24, MMSI, NORAD ID, place name, or coordinates"
               onChange={(event) => setSearchQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
@@ -1457,18 +1506,23 @@ export default function App() {
                   <div><span>Identifier</span><strong>{selected.id}</strong></div>
                   <div><span>Source</span><strong>{selected.source}</strong></div>
                   {"observed_at" in selected ? <div><span>Observed</span><strong>{selected.observed_at}</strong></div> : null}
+                  {"computed_lat" in selected ? <div><span>Coordinates</span><strong>{selected.computed_lat.toFixed(3)}, {selected.computed_lon.toFixed(3)}</strong></div> : null}
                   {"lat" in selected ? <div><span>Coordinates</span><strong>{selected.lat.toFixed(3)}, {selected.lon.toFixed(3)}</strong></div> : null}
-                  {"altitude_m" in selected ? <div><span>Altitude</span><strong>{selected.kind === "satellite" ? formatAltitudeKm(selected.altitude_m) ?? "n/a" : formatAltitudeFeet(selected.altitude_m) ?? "n/a"}</strong></div> : null}
+                  {"altitude_m" in selected ? <div><span>Altitude</span><strong>{formatAltitudeFeet(selected.altitude_m) ?? "n/a"}</strong></div> : null}
+                  {"computed_alt_km" in selected ? <div><span>Altitude</span><strong>{formatAltitudeKm(selected.computed_alt_km != null ? selected.computed_alt_km * 1000 : null) ?? "n/a"}</strong></div> : null}
                   {"velocity_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.velocity_kts) ?? "n/a"}</strong></div> : null}
+                  {"computed_velocity_kms" in selected ? <div><span>Speed</span><strong>{formatVelocityKms(selected.computed_velocity_kms) ?? "n/a"}</strong></div> : null}
                   {"speed_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.speed_kts) ?? "n/a"}</strong></div> : null}
                   {"heading_deg" in selected ? <div><span>Heading</span><strong>{selected.heading_deg ?? "n/a"}°</strong></div> : null}
                   {"registration" in selected ? <div><span>Registration</span><strong>{selected.registration ?? "n/a"}</strong></div> : null}
                   {"operator" in selected ? <div><span>Operator</span><strong>{selected.operator ?? "n/a"}</strong></div> : null}
                   {"vessel_type" in selected ? <div><span>Type</span><strong>{selected.vessel_type ?? "n/a"}</strong></div> : null}
-                  {"catalog_number" in selected ? <div><span>NORAD</span><strong>{selected.catalog_number}</strong></div> : null}
+                  {"norad_cat_id" in selected ? <div><span>NORAD</span><strong>{selected.norad_cat_id}</strong></div> : null}
                   {"international_designator" in selected ? <div><span>Intl Designator</span><strong>{selected.international_designator ?? "n/a"}</strong></div> : null}
                   {"group_name" in selected ? <div><span>Group</span><strong>{selected.group_name ?? "n/a"}</strong></div> : null}
                   {"orbit_class" in selected ? <div><span>Orbit</span><strong>{selected.orbit_class ?? "n/a"}</strong></div> : null}
+                  {"epoch" in selected ? <div><span>Epoch</span><strong>{selected.epoch ?? "n/a"}</strong></div> : null}
+                  {"object_type" in selected ? <div><span>Object Type</span><strong>{selected.object_type ?? "n/a"}</strong></div> : null}
                 </>
               ) : (
                 <p className="muted">Analyst context appears here when an entity is selected.</p>

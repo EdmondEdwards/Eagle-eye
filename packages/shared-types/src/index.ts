@@ -2,6 +2,8 @@ export type SourceName =
   | "opensky"
   | "aisstream"
   | "celestrak"
+  | "spacetrack"
+  | "n2yo"
   | "faa_tfr"
   | "webcam_catalog_placeholder"
   | "user"
@@ -48,16 +50,49 @@ export interface Vessel extends SourceProvenance, GeoPoint {
   speed_kts?: number | null;
 }
 
-export interface Satellite extends SourceProvenance, GeoPoint {
+export interface Satellite extends SourceProvenance {
   id: string;
-  catalog_number: string;
-  satellite_name: string;
+  norad_cat_id: string;
   international_designator?: string | null;
+  name: string;
+  object_type?: string | null;
   group_name?: string | null;
   orbit_class?: string | null;
-  altitude_m?: number | null;
-  velocity_kts?: number | null;
-  tle_epoch?: string | null;
+  tle_line1?: string | null;
+  tle_line2?: string | null;
+  epoch?: string | null;
+  inclination_deg?: number | null;
+  eccentricity?: number | null;
+  mean_motion?: number | null;
+  raan_deg?: number | null;
+  arg_perigee_deg?: number | null;
+  mean_anomaly_deg?: number | null;
+  bstar?: number | null;
+  computed_lat: number;
+  computed_lon: number;
+  computed_alt_km?: number | null;
+  computed_velocity_kms?: number | null;
+  playback_confidence?: number | null;
+}
+
+export interface SatelliteCatalogRecord extends SourceProvenance {
+  id: string;
+  norad_cat_id: string;
+  international_designator?: string | null;
+  name: string;
+  object_type?: string | null;
+  group_name?: string | null;
+  orbit_class?: string | null;
+  tle_line1?: string | null;
+  tle_line2?: string | null;
+  epoch?: string | null;
+  inclination_deg?: number | null;
+  eccentricity?: number | null;
+  mean_motion?: number | null;
+  raan_deg?: number | null;
+  arg_perigee_deg?: number | null;
+  mean_anomaly_deg?: number | null;
+  bstar?: number | null;
 }
 
 export interface AirspaceOverlay extends SourceProvenance {
@@ -162,9 +197,12 @@ export interface SavedViewRecord {
 export interface TimelinePoint extends GeoPoint {
   observed_at: string;
   altitude_m?: number | null;
+  alt_km?: number | null;
   heading_deg?: number | null;
   velocity_kts?: number | null;
+  velocity_kms?: number | null;
   speed_kts?: number | null;
+  confidence?: number | null;
 }
 
 export interface TimelineTrack {
@@ -182,6 +220,13 @@ export interface TimelineResponse {
   tracks: TimelineTrack[];
 }
 
+export interface OrbitPathResponse {
+  norad_cat_id: string;
+  source: string;
+  epoch?: string | null;
+  points: TimelinePoint[];
+}
+
 export interface SearchResult {
   kind: string;
   id: string;
@@ -193,7 +238,7 @@ export interface SearchResult {
 }
 
 export interface LiveEnvelope {
-  topic: "aircraft" | "vessel" | "satellite" | "airspace" | "heartbeat";
+  topic: "aircraft" | "vessel" | "satellite" | "airspace" | "satellite.batch" | "heartbeat";
   action: "upsert" | "delete";
   payload: Record<string, unknown>;
 }

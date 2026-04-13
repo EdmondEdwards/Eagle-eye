@@ -15,11 +15,13 @@ from .schemas import (
     NoteCreate,
     NoteRecord,
     NoteUpdate,
+    OrbitPathResponse,
     SavedViewCreate,
     SavedViewRecord,
     SavedViewUpdate,
     SearchResult,
     Satellite,
+    SatelliteCatalogRecord,
     TagAssignment,
     TagAssignmentCreate,
     TagCreate,
@@ -83,8 +85,33 @@ def vessels_history(
 
 
 @router.get("/api/satellites/current", response_model=list[Satellite])
-def satellites_current(bbox: str | None = Query(default=None), limit: int = Query(default=2000, le=5000)) -> list[dict]:
-    return repo.list_satellites_current(bbox, limit)
+def satellites_current(
+    bbox: str | None = Query(default=None),
+    limit: int = Query(default=2000, le=5000),
+    norad_cat_id: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+) -> list[dict]:
+    return repo.list_satellites_current(bbox, limit, norad_cat_id=norad_cat_id, name=name, group=group)
+
+
+@router.get("/api/satellites/catalog", response_model=list[SatelliteCatalogRecord])
+def satellites_catalog(
+    limit: int = Query(default=500, le=5000),
+    norad_cat_id: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    object_type: str | None = Query(default=None),
+    orbit_class: str | None = Query(default=None),
+) -> list[dict]:
+    return repo.list_satellites_catalog(
+        limit=limit,
+        norad_cat_id=norad_cat_id,
+        name=name,
+        group=group,
+        object_type=object_type,
+        orbit_class=orbit_class,
+    )
 
 
 @router.get("/api/satellites/history", response_model=TimelineResponse)
@@ -93,11 +120,43 @@ def satellites_history(
     until: datetime | None = Query(default=None),
     bbox: str | None = Query(default=None),
     entity_id: str | None = Query(default=None),
+    norad_cat_id: str | None = Query(default=None),
     limit: int = Query(default=30000, le=120000),
 ) -> dict:
     since = since or _default_since()
     until = until or datetime.now(timezone.utc)
-    return repo.satellite_history(since, until, bbox, entity_id, limit)
+    return repo.satellite_history(since, until, bbox, entity_id, limit, norad_cat_id=norad_cat_id)
+
+
+@router.get("/api/satellites/search", response_model=list[SearchResult])
+def satellites_search(q: str = Query(..., min_length=1), group: str | None = Query(default=None), limit: int = Query(default=20, le=100)) -> list[dict]:
+    return repo.satellite_search(q, group, limit)
+
+
+@router.get("/api/satellites/{norad_cat_id}", response_model=Satellite)
+def get_satellite(norad_cat_id: str) -> dict:
+    record = repo.get_satellite(norad_cat_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Satellite not found")
+    return record
+
+
+@router.get("/api/satellites/{norad_cat_id}/orbit", response_model=OrbitPathResponse)
+def satellite_orbit(
+    norad_cat_id: str,
+    start: datetime | None = Query(default=None),
+    minutes_ahead: int = Query(default=90, ge=15, le=24 * 60),
+    step_seconds: int = Query(default=120, ge=15, le=3600),
+) -> dict:
+    record = repo.satellite_orbit(
+        norad_cat_id,
+        start=start or datetime.now(timezone.utc),
+        minutes_ahead=minutes_ahead,
+        step_seconds=step_seconds,
+    )
+    if not record:
+        raise HTTPException(status_code=404, detail="Satellite not found")
+    return record
 
 
 @router.get("/api/airspace/current", response_model=list[AirspaceOverlay])

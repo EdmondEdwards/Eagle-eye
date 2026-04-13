@@ -44,16 +44,51 @@ class Vessel(BaseModel):
 
 class Satellite(BaseModel):
     id: str
-    catalog_number: str
-    satellite_name: str
+    norad_cat_id: str
     international_designator: str | None = None
+    name: str
+    object_type: str | None = None
     group_name: str | None = None
     orbit_class: str | None = None
-    lat: float
-    lon: float
-    altitude_m: float | None = None
-    velocity_kts: float | None = None
-    tle_epoch: datetime | None = None
+    tle_line1: str | None = None
+    tle_line2: str | None = None
+    epoch: datetime | None = None
+    inclination_deg: float | None = None
+    eccentricity: float | None = None
+    mean_motion: float | None = None
+    raan_deg: float | None = None
+    arg_perigee_deg: float | None = None
+    mean_anomaly_deg: float | None = None
+    bstar: float | None = None
+    computed_lat: float
+    computed_lon: float
+    computed_alt_km: float | None = None
+    computed_velocity_kms: float | None = None
+    source: str
+    source_confidence: float
+    observed_at: datetime
+    playback_confidence: float | None = None
+    raw_reference: str | None = None
+
+
+class SatelliteCatalogRecord(BaseModel):
+    id: str
+    norad_cat_id: str
+    international_designator: str | None = None
+    name: str
+    object_type: str | None = None
+    group_name: str | None = None
+    orbit_class: str | None = None
+    tle_line1: str | None = None
+    tle_line2: str | None = None
+    epoch: datetime | None = None
+    inclination_deg: float | None = None
+    eccentricity: float | None = None
+    mean_motion: float | None = None
+    raan_deg: float | None = None
+    arg_perigee_deg: float | None = None
+    mean_anomaly_deg: float | None = None
+    bstar: float | None = None
     source: str
     source_confidence: float
     observed_at: datetime
@@ -79,9 +114,12 @@ class TimelinePoint(BaseModel):
     lon: float
     observed_at: datetime
     altitude_m: float | None = None
+    alt_km: float | None = None
     heading_deg: float | None = None
     velocity_kts: float | None = None
+    velocity_kms: float | None = None
     speed_kts: float | None = None
+    confidence: float | None = None
 
 
 class TimelineTrack(BaseModel):
@@ -94,6 +132,13 @@ class TimelineTrack(BaseModel):
 class TimelineResponse(BaseModel):
     window: dict[str, datetime]
     tracks: list[TimelineTrack]
+
+
+class OrbitPathResponse(BaseModel):
+    norad_cat_id: str
+    source: str
+    epoch: datetime | None = None
+    points: list[TimelinePoint]
 
 
 class CaseEntity(BaseModel):
