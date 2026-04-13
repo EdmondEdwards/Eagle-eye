@@ -77,6 +77,30 @@ function readPayload(entity: Entity | null, time: JulianDate): GlobeEntityPayloa
   return value as GlobeEntityPayload;
 }
 
+function isAircraftPayload(payload: Record<string, unknown>): payload is Aircraft {
+  return (
+    typeof payload.id === "string" &&
+    typeof payload.icao24 === "string" &&
+    typeof payload.source === "string" &&
+    typeof payload.source_confidence === "number" &&
+    typeof payload.observed_at === "string" &&
+    typeof payload.lat === "number" &&
+    typeof payload.lon === "number"
+  );
+}
+
+function isVesselPayload(payload: Record<string, unknown>): payload is Vessel {
+  return (
+    typeof payload.id === "string" &&
+    typeof payload.mmsi === "string" &&
+    typeof payload.source === "string" &&
+    typeof payload.source_confidence === "number" &&
+    typeof payload.observed_at === "string" &&
+    typeof payload.lat === "number" &&
+    typeof payload.lon === "number"
+  );
+}
+
 export default function App() {
   const viewerRef = useRef<Viewer | null>(null);
   const viewerHostRef = useRef<HTMLDivElement | null>(null);
@@ -219,8 +243,11 @@ export default function App() {
       socket = connectLiveFeed((message) => {
         if (message.topic === "aircraft") {
           setAircraft((current) => {
+            if (!isAircraftPayload(message.payload)) {
+              return current;
+            }
             const next = [...current];
-            const payload = message.payload as Aircraft;
+            const payload = message.payload;
             const index = next.findIndex((item) => item.id === payload.id);
             if (index >= 0) next[index] = payload;
             else next.unshift(payload);
@@ -230,8 +257,11 @@ export default function App() {
 
         if (message.topic === "vessel") {
           setVessels((current) => {
+            if (!isVesselPayload(message.payload)) {
+              return current;
+            }
             const next = [...current];
-            const payload = message.payload as Vessel;
+            const payload = message.payload;
             const index = next.findIndex((item) => item.id === payload.id);
             if (index >= 0) next[index] = payload;
             else next.unshift(payload);

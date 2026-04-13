@@ -1,9 +1,16 @@
-export const layerDefinitions = [
+export type LayerDefinition = {
+  key: "aircraft" | "vessels" | "airspace" | "webcams";
+  label: string;
+  color: string;
+  disabled?: boolean;
+};
+
+export const layerDefinitions: readonly LayerDefinition[] = [
   { key: "aircraft", label: "Aircraft", color: "#6ee7ff" },
   { key: "vessels", label: "Vessels", color: "#4ade80" },
   { key: "airspace", label: "Airspace / TFR", color: "#f59e0b" },
   { key: "webcams", label: "Webcams", color: "#a78bfa", disabled: true }
-] as const;
+];
 
 export const detailTabs = ["details", "relationships", "timeline", "notes", "sources"] as const;
 
@@ -18,4 +25,3 @@ export const theme = {
   warning: "#f59e0b",
   success: "#4ade80"
 };
-
