@@ -77,27 +77,37 @@ function readPayload(entity: Entity | null, time: JulianDate): GlobeEntityPayloa
   return value as GlobeEntityPayload;
 }
 
-function isAircraftPayload(payload: Record<string, unknown>): payload is Aircraft {
+function isAircraftPayload(payload: unknown): payload is Aircraft {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+
+  const value = payload as Record<string, unknown>;
   return (
-    typeof payload.id === "string" &&
-    typeof payload.icao24 === "string" &&
-    typeof payload.source === "string" &&
-    typeof payload.source_confidence === "number" &&
-    typeof payload.observed_at === "string" &&
-    typeof payload.lat === "number" &&
-    typeof payload.lon === "number"
+    typeof value.id === "string" &&
+    typeof value.icao24 === "string" &&
+    typeof value.source === "string" &&
+    typeof value.source_confidence === "number" &&
+    typeof value.observed_at === "string" &&
+    typeof value.lat === "number" &&
+    typeof value.lon === "number"
   );
 }
 
-function isVesselPayload(payload: Record<string, unknown>): payload is Vessel {
+function isVesselPayload(payload: unknown): payload is Vessel {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+
+  const value = payload as Record<string, unknown>;
   return (
-    typeof payload.id === "string" &&
-    typeof payload.mmsi === "string" &&
-    typeof payload.source === "string" &&
-    typeof payload.source_confidence === "number" &&
-    typeof payload.observed_at === "string" &&
-    typeof payload.lat === "number" &&
-    typeof payload.lon === "number"
+    typeof value.id === "string" &&
+    typeof value.mmsi === "string" &&
+    typeof value.source === "string" &&
+    typeof value.source_confidence === "number" &&
+    typeof value.observed_at === "string" &&
+    typeof value.lat === "number" &&
+    typeof value.lon === "number"
   );
 }
 
