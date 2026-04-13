@@ -12,8 +12,9 @@ from urllib.parse import urljoin
 import httpx
 import websockets
 from bs4 import BeautifulSoup
+from skyfield.api import EarthSatellite, load, wgs84
 
-from .canonical import AirspaceOverlayRecord, AircraftSnapshot, VesselSnapshot, WebcamCatalogEntry
+from .canonical import AirspaceOverlayRecord, AircraftSnapshot, SatelliteSnapshot, VesselSnapshot, WebcamCatalogEntry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -247,6 +248,95 @@ class FAAAirspaceAdapter:
             points.append([lon + math.cos(theta) * radius_deg_lon, lat + math.sin(theta) * radius_deg_lat])
         points.append(points[0])
         return {"type": "Polygon", "coordinates": [points]}
+
+
+class CelesTrakSatelliteAdapter:
+    BASE_URL = "https://celestrak.org/NORAD/elements/gp.php"
+    DEFAULT_GROUPS = ("stations", "visual", "weather", "resource", "sarsat", "tdrss")
+
+    def __init__(self, groups: tuple[str, ...] | None = None) -> None:
+        self.groups = groups or self.DEFAULT_GROUPS
+        self._timescale = load.timescale(builtin=True)
+
+    async def fetch_current(self) -> list[SatelliteSnapshot]:
+        now = datetime.now(timezone.utc)
+        at_time = self._timescale.from_datetime(now)
+        records_by_id: dict[str, SatelliteSnapshot] = {}
+
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            for group in self.groups:
+                try:
+                    response = await client.get(
+                        self.BASE_URL,
+                        params={"GROUP": group, "FORMAT": "json"},
+                        timeout=30.0,
+                    )
+                    response.raise_for_status()
+                except Exception as exc:  # pragma: no cover - best effort external feed
+                    LOGGER.warning("CelesTrak group %s fetch failed: %s", group, exc)
+                    continue
+
+                source_url = str(response.url)
+                for fields in response.json():
+                    record = self._record_from_omm(fields, group, at_time, now, source_url)
+                    if record:
+                        records_by_id[record.id] = record
+
+        return sorted(records_by_id.values(), key=lambda record: (record.group_name or "", record.satellite_name))
+
+    def _record_from_omm(
+        self,
+        fields: dict[str, Any],
+        group: str,
+        at_time: Any,
+        observed_at: datetime,
+        source_url: str,
+    ) -> SatelliteSnapshot | None:
+        catalog_number = str(fields.get("NORAD_CAT_ID") or "").strip()
+        name = str(fields.get("OBJECT_NAME") or "").strip()
+        if not catalog_number or not name:
+            return None
+
+        try:
+            satellite = EarthSatellite.from_omm(self._timescale, fields)
+            geocentric = satellite.at(at_time)
+            latitude, longitude = wgs84.latlon_of(geocentric)
+            lat = float(latitude.degrees)
+            lon = float(longitude.degrees)
+            altitude_m = float(wgs84.height_of(geocentric).m)
+            velocity = geocentric.velocity.km_per_s
+            speed_kts = math.sqrt(sum(float(component) ** 2 for component in velocity)) * 1943.84
+        except Exception as exc:  # pragma: no cover - element parse/propagation errors
+            LOGGER.warning("CelesTrak propagation failed for %s: %s", catalog_number, exc)
+            return None
+
+        return SatelliteSnapshot(
+            id=f"satellite:{catalog_number}",
+            catalog_number=catalog_number,
+            satellite_name=name,
+            international_designator=str(fields.get("OBJECT_ID") or "").strip() or None,
+            group_name=group.upper(),
+            orbit_class=self._orbit_class(altitude_m),
+            lat=lat,
+            lon=lon,
+            altitude_m=altitude_m,
+            velocity_kts=speed_kts,
+            tle_epoch=satellite.epoch.utc_datetime().replace(tzinfo=timezone.utc),
+            observed_at=observed_at,
+            raw_reference=source_url,
+            raw_payload=fields,
+        )
+
+    @staticmethod
+    def _orbit_class(altitude_m: float) -> str:
+        altitude_km = altitude_m / 1000.0
+        if altitude_km >= 35000:
+            return "GEO"
+        if altitude_km >= 20000:
+            return "MEO"
+        if altitude_km >= 2000:
+            return "HEO"
+        return "LEO"
 
 
 class WebcamCatalogAdapter:

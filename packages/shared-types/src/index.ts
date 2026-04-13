@@ -1,6 +1,7 @@
 export type SourceName =
   | "opensky"
   | "aisstream"
+  | "celestrak"
   | "faa_tfr"
   | "webcam_catalog_placeholder"
   | "user"
@@ -47,6 +48,18 @@ export interface Vessel extends SourceProvenance, GeoPoint {
   speed_kts?: number | null;
 }
 
+export interface Satellite extends SourceProvenance, GeoPoint {
+  id: string;
+  catalog_number: string;
+  satellite_name: string;
+  international_designator?: string | null;
+  group_name?: string | null;
+  orbit_class?: string | null;
+  altitude_m?: number | null;
+  velocity_kts?: number | null;
+  tle_epoch?: string | null;
+}
+
 export interface AirspaceOverlay extends SourceProvenance {
   id: string;
   source_id: string;
@@ -65,7 +78,7 @@ export interface EventPlaceholder extends SourceProvenance {
 }
 
 export interface CaseEntity {
-  entity_kind: "aircraft" | "vessel" | "airspace";
+  entity_kind: "aircraft" | "vessel" | "satellite" | "airspace";
   entity_id: string;
   role?: string | null;
 }
@@ -114,7 +127,7 @@ export interface TagAssignment {
 
 export interface WatchlistEntity {
   id: string;
-  entity_kind: "aircraft" | "vessel";
+  entity_kind: "aircraft" | "vessel" | "satellite";
   entity_id: string;
   label?: string | null;
   created_at: string;
@@ -157,7 +170,7 @@ export interface TimelinePoint extends GeoPoint {
 export interface TimelineTrack {
   entity_id: string;
   label: string;
-  entity_kind: "aircraft" | "vessel";
+  entity_kind: "aircraft" | "vessel" | "satellite";
   points: TimelinePoint[];
 }
 
@@ -180,7 +193,7 @@ export interface SearchResult {
 }
 
 export interface LiveEnvelope {
-  topic: "aircraft" | "vessel" | "airspace" | "heartbeat";
+  topic: "aircraft" | "vessel" | "satellite" | "airspace" | "heartbeat";
   action: "upsert" | "delete";
   payload: Record<string, unknown>;
 }

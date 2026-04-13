@@ -5,8 +5,9 @@ import type {
   LiveEnvelope,
   NoteRecord,
   SavedViewRecord,
-  SearchResult,
-  TagRecord,
+    SearchResult,
+    Satellite,
+    TagRecord,
   TimelineResponse,
   Vessel,
   WatchlistRecord
@@ -46,6 +47,10 @@ export const api = {
     requestJson<Vessel[]>(`/api/vessels/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getVesselsHistory: (params: URLSearchParams) =>
     requestJson<TimelineResponse>(`/api/vessels/history?${params.toString()}`),
+  getSatellitesCurrent: (bbox?: string) =>
+    requestJson<Satellite[]>(`/api/satellites/current?limit=2500${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
+  getSatellitesHistory: (params: URLSearchParams) =>
+    requestJson<TimelineResponse>(`/api/satellites/history?${params.toString()}`),
   getAirspaceCurrent: () => requestJson<AirspaceOverlay[]>("/api/airspace/current"),
   getCases: () => requestJson<CaseRecord[]>("/api/cases"),
   createCase: (payload: Partial<CaseRecord>) =>

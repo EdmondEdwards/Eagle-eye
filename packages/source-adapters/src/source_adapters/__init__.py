@@ -1,15 +1,16 @@
-from .adapters import AISStreamAdapter, FAAAirspaceAdapter, OpenSkyAdapter, WebcamCatalogAdapter
-from .canonical import AirspaceOverlayRecord, AircraftSnapshot, LiveEnvelope, VesselSnapshot, WebcamCatalogEntry
+from .adapters import AISStreamAdapter, CelesTrakSatelliteAdapter, FAAAirspaceAdapter, OpenSkyAdapter, WebcamCatalogAdapter
+from .canonical import AirspaceOverlayRecord, AircraftSnapshot, LiveEnvelope, SatelliteSnapshot, VesselSnapshot, WebcamCatalogEntry
 
 __all__ = [
     "AISStreamAdapter",
+    "CelesTrakSatelliteAdapter",
     "FAAAirspaceAdapter",
     "OpenSkyAdapter",
     "WebcamCatalogAdapter",
     "AirspaceOverlayRecord",
     "AircraftSnapshot",
     "LiveEnvelope",
+    "SatelliteSnapshot",
     "VesselSnapshot",
     "WebcamCatalogEntry",
 ]
-

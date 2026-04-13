@@ -4,6 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
+from .db import ensure_runtime_schema
 from .live import live_messages
 from .routes import router
 
@@ -19,6 +20,11 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup() -> None:
+    ensure_runtime_schema()
+
+
 @app.websocket("/ws/live")
 async def live_feed(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -27,4 +33,3 @@ async def live_feed(websocket: WebSocket) -> None:
             await websocket.send_text(message)
     except WebSocketDisconnect:
         return
-

@@ -20,15 +20,16 @@ import {
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type {
-  Aircraft,
-  AirspaceOverlay,
-  CaseRecord,
-  NoteRecord,
-  SavedViewRecord,
-  SearchResult,
-  TimelineTrack,
-  Vessel,
-  WatchlistRecord
+    Aircraft,
+    AirspaceOverlay,
+    CaseRecord,
+    NoteRecord,
+    SavedViewRecord,
+    SearchResult,
+    Satellite,
+    TimelineTrack,
+    Vessel,
+    WatchlistRecord
 } from "@eagle-eye/shared-types";
 import { detailTabs, layerDefinitions } from "@eagle-eye/ui";
 import { api, connectLiveFeed } from "./lib/api";
@@ -36,12 +37,14 @@ import { api, connectLiveFeed } from "./lib/api";
 type SelectedEntity =
   | ({ kind: "aircraft" } & Aircraft)
   | ({ kind: "vessel" } & Vessel)
+  | ({ kind: "satellite" } & Satellite)
   | ({ kind: "airspace" } & AirspaceOverlay)
   | null;
 
 type GlobeEntityPayload =
   | { kind: "aircraft"; data: Aircraft }
   | { kind: "vessel"; data: Vessel }
+  | { kind: "satellite"; data: Satellite }
   | { kind: "airspace"; data: AirspaceOverlay };
 
 type LayerState = Record<string, boolean>;
@@ -68,6 +71,7 @@ type ViewBounds = {
 const defaultLayers: LayerState = {
   aircraft: true,
   vessels: true,
+  satellites: true,
   airspace: true,
   webcams: false
 };
@@ -76,6 +80,8 @@ const AIRCRAFT_COLOR = "#ffd54a";
 const AIRCRAFT_SELECTED_COLOR = "#fff4b3";
 const VESSEL_COLOR = "#6ee7ff";
 const VESSEL_SELECTED_COLOR = "#b6f4ff";
+const SATELLITE_COLOR = "#9af6b0";
+const SATELLITE_SELECTED_COLOR = "#dcffd3";
 
 const cameraPresets: readonly CameraPreset[] = [
   { key: "global", label: "Global", lat: 28, lon: -20, altitude: 22_000_000, headingDeg: 0, pitchDeg: -90 },
@@ -87,9 +93,9 @@ const cameraPresets: readonly CameraPreset[] = [
 
 const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#061019" fill-opacity="0.36" d="M32 5l4 14 17 10v5l-14 3-4 20h-6l-4-20-14-3v-5l17-10z"/>
-    <path fill="#ffd54a" d="M31.8 2c1.2 0 2.2.8 2.5 2L36.7 17l16 8.9c1 .5 1.6 1.5 1.6 2.6v4.2c0 1.3-.9 2.4-2.1 2.6L39.7 38l-4.2 21.7c-.2 1.1-1.1 1.8-2.2 1.8h-2.7c-1.1 0-2-.7-2.2-1.8L24.3 38 11.8 35.3c-1.2-.2-2.1-1.3-2.1-2.6v-4.2c0-1.1.6-2.1 1.6-2.6l16-8.9L29.7 4c.3-1.2 1.3-2 2.5-2h-.4z"/>
-    <path fill="#061019" fill-opacity="0.32" d="M30.3 6.8h3.4L35.9 18l14.3 8v2.8l-12.1 2.4-3.1 16.3h-1.8l-1.2-8-1.2 8H29l-3.1-16.3-12.1-2.4V26l14.3-8z"/>
+    <path fill="#061019" fill-opacity="0.28" d="M32 3.5l4.4 17.4 15.8 8.5v4.1l-13.5 2.8-4 23.3h-5.4l-4-23.3-13.5-2.8v-4.1l15.8-8.5L32 3.5z"/>
+    <path fill="#ffd54a" d="M31.8 2.1c1.4 0 2.5.9 2.8 2.2l3.1 14.2 13.8 7.5c1 .5 1.7 1.6 1.7 2.7v3.6c0 1.3-.9 2.3-2.1 2.6l-11.7 2.5-3.7 21.5c-.2 1.2-1.2 2-2.4 2h-2.5c-1.2 0-2.2-.8-2.4-2l-3.7-21.5-11.7-2.5c-1.2-.3-2.1-1.3-2.1-2.6v-3.6c0-1.1.6-2.2 1.7-2.7l13.8-7.5 3.1-14.2c.3-1.3 1.4-2.2 2.8-2.2z"/>
+    <path fill="#061019" fill-opacity="0.28" d="M30.6 8.5h2.8l2.1 11.1 13.2 7v1.9l-11.2 2.1-2.6 15.1h-1.6l-1.3-8.6-1.3 8.6h-1.6L26.5 30.6l-11.2-2.1v-1.9l13.2-7z"/>
   </svg>
 `)}`;
 
@@ -99,6 +105,15 @@ const VESSEL_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
     <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M9 38h46l-4 10-19 10-19-10z"/>
     <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M22 17h20v16H22z"/>
     <path fill="#061019" fill-opacity="0.3" d="M26 22h12v8H26z"/>
+  </svg>
+`)}`;
+
+const SATELLITE_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <path fill="#061019" fill-opacity="0.35" d="M14 18l10 4 8-8 8 8 10-4 2 2-8 10 8 10-2 2-10-4-8 8-8-8-10 4-2-2 8-10-8-10z"/>
+    <path fill="#9af6b0" d="M14 18l10 4 8-8 8 8 10-4 2 2-8 10 8 10-2 2-10-4-8 8-8-8-10 4-2-2 8-10-8-10z"/>
+    <circle cx="32" cy="32" r="7" fill="#061019" fill-opacity="0.34"/>
+    <circle cx="32" cy="32" r="3.4" fill="#dcffd3"/>
   </svg>
 `)}`;
 
@@ -116,10 +131,16 @@ function formatKnots(speed?: number | null): string | null {
   return `${Math.round(speed)} kt`;
 }
 
+function formatAltitudeKm(altitudeMeters?: number | null): string | null {
+  if (altitudeMeters == null) return null;
+  return `${(altitudeMeters / 1000).toFixed(0)} km`;
+}
+
 function entityLabel(entity: SelectedEntity): string {
   if (!entity) return "No selection";
   if (entity.kind === "aircraft") return entity.callsign?.trim() || entity.icao24;
   if (entity.kind === "vessel") return entity.vessel_name?.trim() || entity.mmsi;
+  if (entity.kind === "satellite") return entity.satellite_name?.trim() || entity.catalog_number;
   return entity.name;
 }
 
@@ -174,6 +195,14 @@ function vesselLabel(item: Vessel, isSelected: boolean): string {
 
   const secondary = [item.vessel_type?.trim(), formatKnots(item.speed_kts)].filter(Boolean).join(" • ");
   return secondary ? `${primary}\n${secondary}` : primary;
+}
+
+function satelliteLabel(item: Satellite, isSelected: boolean): string {
+  if (!isSelected) {
+    return item.satellite_name;
+  }
+  const secondary = [item.orbit_class, formatAltitudeKm(item.altitude_m)].filter(Boolean).join(" • ");
+  return secondary ? `${item.satellite_name}\n${secondary}` : item.satellite_name;
 }
 
 function centroidFromAirspace(overlay: AirspaceOverlay): { lat: number; lon: number } | null {
@@ -350,12 +379,33 @@ function isVesselPayload(payload: unknown): payload is Vessel {
   );
 }
 
+function isSatellitePayload(payload: unknown): payload is Satellite {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+
+  const value = payload as Record<string, unknown>;
+  return (
+    typeof value.id === "string" &&
+    typeof value.catalog_number === "string" &&
+    typeof value.satellite_name === "string" &&
+    typeof value.source === "string" &&
+    typeof value.source_confidence === "number" &&
+    typeof value.observed_at === "string" &&
+    typeof value.lat === "number" &&
+    typeof value.lon === "number"
+  );
+}
+
 function toSelectedEntity(payload: GlobeEntityPayload): SelectedEntity {
   if (payload.kind === "aircraft") {
     return { kind: "aircraft", ...payload.data };
   }
   if (payload.kind === "vessel") {
     return { kind: "vessel", ...payload.data };
+  }
+  if (payload.kind === "satellite") {
+    return { kind: "satellite", ...payload.data };
   }
   return { kind: "airspace", ...payload.data };
 }
@@ -390,9 +440,9 @@ function focusEntityInViewer(viewer: Viewer, entity: SelectedEntity): boolean {
       viewer,
       entity.lat,
       entity.lon,
-      entity.kind === "aircraft" ? 1_050_000 : 1_400_000,
-      entity.heading_deg ?? 0,
-      entity.kind === "aircraft" ? -66 : -69,
+      entity.kind === "aircraft" ? 1_050_000 : entity.kind === "satellite" ? 2_200_000 : 1_400_000,
+      "heading_deg" in entity ? entity.heading_deg ?? 0 : 0,
+      entity.kind === "aircraft" ? -66 : entity.kind === "satellite" ? -74 : -69,
       1.2
     );
     return true;
@@ -417,6 +467,7 @@ export default function App() {
   const [detailTab, setDetailTab] = useState<(typeof detailTabs)[number]>("details");
   const [aircraft, setAircraft] = useState<Aircraft[]>([]);
   const [vessels, setVessels] = useState<Vessel[]>([]);
+  const [satellites, setSatellites] = useState<Satellite[]>([]);
   const [airspace, setAirspace] = useState<AirspaceOverlay[]>([]);
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [watchlists, setWatchlists] = useState<WatchlistRecord[]>([]);
@@ -429,6 +480,7 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [aircraftTracks, setAircraftTracks] = useState<TimelineTrack[]>([]);
   const [vesselTracks, setVesselTracks] = useState<TimelineTrack[]>([]);
+  const [satelliteTracks, setSatelliteTracks] = useState<TimelineTrack[]>([]);
   const [status, setStatus] = useState("Loading operational picture...");
   const [activePreset, setActivePreset] = useState<string>("global");
   const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
@@ -462,8 +514,13 @@ export default function App() {
     () => vessels.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 1400),
     [vessels, viewBounds]
   );
+  const visibleSatellites = useMemo(
+    () => satellites.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 1000),
+    [satellites, viewBounds]
+  );
   const aircraftRenderBudget = cameraHeight >= 12_000_000 ? 900 : cameraHeight >= 5_500_000 ? 1_500 : 2_200;
   const vesselRenderBudget = cameraHeight >= 12_000_000 ? 420 : cameraHeight >= 5_500_000 ? 850 : 1_400;
+  const satelliteRenderBudget = cameraHeight >= 12_000_000 ? 240 : cameraHeight >= 5_500_000 ? 460 : 760;
   const renderedAircraft = useMemo(
     () => trimVisibleEntities(visibleAircraft, aircraftRenderBudget, selected?.kind === "aircraft" ? selected.id : null),
     [aircraftRenderBudget, selected, visibleAircraft]
@@ -472,10 +529,15 @@ export default function App() {
     () => trimVisibleEntities(visibleVessels, vesselRenderBudget, selected?.kind === "vessel" ? selected.id : null),
     [selected, vesselRenderBudget, visibleVessels]
   );
+  const renderedSatellites = useMemo(
+    () => trimVisibleEntities(visibleSatellites, satelliteRenderBudget, selected?.kind === "satellite" ? selected.id : null),
+    [satelliteRenderBudget, selected, visibleSatellites]
+  );
   const zoomBand = useMemo(() => zoomBandLabel(cameraHeight), [cameraHeight]);
-  const renderedTrackCount = renderedAircraft.length + renderedVessels.length;
+  const renderedTrackCount = renderedAircraft.length + renderedVessels.length + renderedSatellites.length;
   const aircraftLabelsEnabled = cameraHeight < 6_500_000;
   const vesselLabelsEnabled = cameraHeight < 4_200_000;
+  const satelliteLabelsEnabled = cameraHeight < 7_500_000;
   const vectorsEnabled = cameraHeight < 8_500_000;
 
   useEffect(() => {
@@ -513,7 +575,7 @@ export default function App() {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
-    const entities = [...visibleAircraft, ...visibleVessels];
+    const entities = [...visibleAircraft, ...visibleVessels, ...visibleSatellites];
     if (entities.length === 0) return;
 
     const sampled = entities.slice(0, 250);
@@ -579,6 +641,8 @@ export default function App() {
         setSelected({ kind: "aircraft", ...payload.data });
       } else if (payload.kind === "vessel") {
         setSelected({ kind: "vessel", ...payload.data });
+      } else if (payload.kind === "satellite") {
+        setSelected({ kind: "satellite", ...payload.data });
       } else if (payload.kind === "airspace") {
         setSelected({ kind: "airspace", ...payload.data });
       }
@@ -609,9 +673,10 @@ export default function App() {
   async function loadOperationalData(bbox?: string | null) {
     try {
       setStatus("Synchronizing live data...");
-      const [nextAircraft, nextVessels, nextAirspace, nextCases, nextWatchlists, nextNotes, nextViews] = await Promise.all([
+      const [nextAircraft, nextVessels, nextSatellites, nextAirspace, nextCases, nextWatchlists, nextNotes, nextViews] = await Promise.all([
         api.getAircraftCurrent(bbox ?? undefined),
         api.getVesselsCurrent(bbox ?? undefined),
+        api.getSatellitesCurrent(bbox ?? undefined),
         api.getAirspaceCurrent(),
         api.getCases(),
         api.getWatchlists(),
@@ -622,12 +687,15 @@ export default function App() {
       startTransition(() => {
         setAircraft(nextAircraft);
         setVessels(nextVessels);
+        setSatellites(nextSatellites);
         setAirspace(nextAirspace);
         setCases(nextCases);
         setWatchlists(nextWatchlists);
         setNotes(nextNotes);
         setSavedViews(nextViews);
-        setStatus(`Live traffic: ${nextAircraft.length} airborne, ${nextVessels.length} maritime, ${nextAirspace.length} overlays in view.`);
+        setStatus(
+          `Live traffic: ${nextAircraft.length} airborne, ${nextVessels.length} maritime, ${nextSatellites.length} orbital, ${nextAirspace.length} overlays in view.`
+        );
       });
     } catch {
       setStatus("API unavailable. Check Eagle Eye services and VITE_API_BASE_URL.");
@@ -680,6 +748,20 @@ export default function App() {
           });
         }
 
+        if (message.topic === "satellite") {
+          setSatellites((current) => {
+            if (!isSatellitePayload(message.payload)) {
+              return current;
+            }
+            const next = [...current];
+            const payload = message.payload;
+            const index = next.findIndex((item) => item.id === payload.id);
+            if (index >= 0) next[index] = payload;
+            else next.unshift(payload);
+            return next.slice(0, 3000);
+          });
+        }
+
         if (message.topic === "airspace") {
           void loadOperationalData(viewQueryRef.current || null);
         }
@@ -716,20 +798,22 @@ export default function App() {
         viewer.entities.add({
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
-          point: {
-            pixelSize: isSelected ? 12 : 7,
-            color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR).withAlpha(isSelected ? 0.38 : 0.18),
-            outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.3),
-            outlineWidth: isSelected ? 2 : 1,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY
-          },
+          point: isSelected
+            ? {
+                pixelSize: 9,
+                color: Color.fromCssColorString(AIRCRAFT_SELECTED_COLOR).withAlpha(0.22),
+                outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.26),
+                outlineWidth: 1,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
           billboard: {
             image: AIRCRAFT_ICON,
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.82 : 0.62,
-            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.3 : 0.18, 22_000_000, isSelected ? 1.04 : 0.88),
+            scale: isSelected ? 0.98 : 0.82,
+            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.22 : 0.16, 22_000_000, isSelected ? 1.38 : 1.16),
             color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
@@ -828,7 +912,54 @@ export default function App() {
       });
     }
 
-    [...aircraftTracks, ...vesselTracks].forEach((track) => {
+    if (layers.satellites) {
+      renderedSatellites.forEach((item) => {
+        const isSelected = selectedKey === `satellite:${item.id}`;
+        viewer.entities.add({
+          id: item.id,
+          position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
+          point: isSelected
+            ? {
+                pixelSize: 9,
+                color: Color.fromCssColorString(SATELLITE_SELECTED_COLOR).withAlpha(0.24),
+                outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.24),
+                outlineWidth: 1,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
+          billboard: {
+            image: SATELLITE_ICON,
+            verticalOrigin: VerticalOrigin.CENTER,
+            alignedAxis: Cartesian3.UNIT_Z,
+            scale: isSelected ? 0.76 : 0.62,
+            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.18 : 0.12, 22_000_000, isSelected ? 1.16 : 0.96),
+            color: Color.fromCssColorString(isSelected ? SATELLITE_SELECTED_COLOR : SATELLITE_COLOR),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
+          },
+          label: isSelected || satelliteLabelsEnabled
+            ? {
+                text: satelliteLabel(item, isSelected),
+                font: isSelected ? "600 12px IBM Plex Sans" : "600 10px IBM Plex Sans",
+                fillColor: Color.fromCssColorString("#dbe7f4"),
+                outlineColor: Color.fromCssColorString("#07111c"),
+                outlineWidth: 2,
+                style: LabelStyle.FILL_AND_OUTLINE,
+                showBackground: true,
+                backgroundColor: Color.fromCssColorString("#0d1724").withAlpha(isSelected ? 0.9 : 0.74),
+                backgroundPadding: new Cartesian2(8, 5),
+                pixelOffset: new Cartesian2(0, 22),
+                scale: isSelected ? 0.82 : 0.7,
+                scaleByDistance: new NearFarScalar(150_000, 0.96, 6_500_000, 0.64),
+                distanceDisplayCondition: new DistanceDisplayCondition(0, isSelected ? 14_000_000 : 4_000_000),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
+          properties: createPropertyBag({ kind: "satellite", data: item })
+        });
+      });
+    }
+
+    [...aircraftTracks, ...vesselTracks, ...satelliteTracks].forEach((track) => {
       if (track.points.length < 2) return;
       const isSelected = Boolean(selected && track.entity_kind === selected.kind && track.entity_id === selected.id);
       viewer.entities.add({
@@ -836,9 +967,9 @@ export default function App() {
         polyline: {
           positions: track.points.map((point) => Cartesian3.fromDegrees(point.lon, point.lat, point.altitude_m ?? 0)),
           width: isSelected ? 4 : 2.2,
-          material: Color.fromCssColorString(track.entity_kind === "aircraft" ? AIRCRAFT_COLOR : VESSEL_COLOR).withAlpha(
-            isSelected ? 0.95 : 0.55
-          )
+          material: Color.fromCssColorString(
+            track.entity_kind === "aircraft" ? AIRCRAFT_COLOR : track.entity_kind === "satellite" ? SATELLITE_COLOR : VESSEL_COLOR
+          ).withAlpha(isSelected ? 0.95 : 0.55)
         }
       });
     });
@@ -846,9 +977,13 @@ export default function App() {
     aircraftLabelsEnabled,
     aircraftTracks,
     layers.aircraft,
+    layers.satellites,
     layers.vessels,
     renderedAircraft,
+    renderedSatellites,
     renderedVessels,
+    satelliteLabelsEnabled,
+    satelliteTracks,
     selected,
     selectedKey,
     vesselLabelsEnabled,
@@ -912,6 +1047,7 @@ export default function App() {
     if (timelineMode === "live") {
       setAircraftTracks([]);
       setVesselTracks([]);
+      setSatelliteTracks([]);
       return;
     }
 
@@ -920,13 +1056,61 @@ export default function App() {
       until: new Date().toISOString()
     });
 
-    Promise.all([api.getAircraftHistory(params), api.getVesselsHistory(params)])
-      .then(([aircraftHistory, vesselHistory]) => {
+    Promise.all([api.getAircraftHistory(params), api.getVesselsHistory(params), api.getSatellitesHistory(params)])
+      .then(([aircraftHistory, vesselHistory, satelliteHistory]) => {
         setAircraftTracks(aircraftHistory.tracks);
         setVesselTracks(vesselHistory.tracks);
+        setSatelliteTracks(satelliteHistory.tracks);
       })
       .catch(() => setStatus("Replay data unavailable. Live view remains active."));
   }, [timelineMinutes, timelineMode, replaySpeed]);
+
+  useEffect(() => {
+    if (timelineMode !== "live" || !selected) {
+      return;
+    }
+
+    const params = new URLSearchParams({
+      since: isoNowMinus(selected.kind === "satellite" ? 180 : 90),
+      until: new Date().toISOString(),
+      entity_id: selected.id
+    });
+
+    const loadFocusedTrack = async () => {
+      try {
+        if (selected.kind === "aircraft") {
+          const history = await api.getAircraftHistory(params);
+          setAircraftTracks(history.tracks.slice(0, 1));
+          setVesselTracks([]);
+          setSatelliteTracks([]);
+          return;
+        }
+        if (selected.kind === "vessel") {
+          const history = await api.getVesselsHistory(params);
+          setAircraftTracks([]);
+          setVesselTracks(history.tracks.slice(0, 1));
+          setSatelliteTracks([]);
+          return;
+        }
+        if (selected.kind === "satellite") {
+          const history = await api.getSatellitesHistory(params);
+          setAircraftTracks([]);
+          setVesselTracks([]);
+          setSatelliteTracks(history.tracks.slice(0, 1));
+          return;
+        }
+        setAircraftTracks([]);
+        setVesselTracks([]);
+        setSatelliteTracks([]);
+      } catch {
+        setStatus("Focused track history is unavailable right now.");
+      }
+    };
+
+    void loadFocusedTrack();
+    const intervalId = window.setInterval(() => void loadFocusedTrack(), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, [selected, timelineMode]);
 
   async function runSearch() {
     if (!searchQuery.trim()) {
@@ -1033,6 +1217,10 @@ export default function App() {
               <span>{renderedVessels.length} rendered</span>
             </div>
             <div className="source-row">
+              <strong>CelesTrak</strong>
+              <span>{renderedSatellites.length} rendered</span>
+            </div>
+            <div className="source-row">
               <strong>FAA TFR</strong>
               <span>{airspace.length} overlays</span>
             </div>
@@ -1135,6 +1323,10 @@ export default function App() {
               <div className="tracker-metric">
                 <strong>{renderedVessels.length.toLocaleString()}</strong>
                 <span>Vessels rendered</span>
+              </div>
+              <div className="tracker-metric">
+                <strong>{renderedSatellites.length.toLocaleString()}</strong>
+                <span>Satellites rendered</span>
               </div>
               <div className="tracker-metric">
                 <strong>{formatCameraAltitude(cameraHeight)}</strong>
@@ -1266,13 +1458,17 @@ export default function App() {
                   <div><span>Source</span><strong>{selected.source}</strong></div>
                   {"observed_at" in selected ? <div><span>Observed</span><strong>{selected.observed_at}</strong></div> : null}
                   {"lat" in selected ? <div><span>Coordinates</span><strong>{selected.lat.toFixed(3)}, {selected.lon.toFixed(3)}</strong></div> : null}
-                  {"altitude_m" in selected ? <div><span>Altitude</span><strong>{formatAltitudeFeet(selected.altitude_m) ?? "n/a"}</strong></div> : null}
+                  {"altitude_m" in selected ? <div><span>Altitude</span><strong>{selected.kind === "satellite" ? formatAltitudeKm(selected.altitude_m) ?? "n/a" : formatAltitudeFeet(selected.altitude_m) ?? "n/a"}</strong></div> : null}
                   {"velocity_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.velocity_kts) ?? "n/a"}</strong></div> : null}
                   {"speed_kts" in selected ? <div><span>Speed</span><strong>{formatKnots(selected.speed_kts) ?? "n/a"}</strong></div> : null}
                   {"heading_deg" in selected ? <div><span>Heading</span><strong>{selected.heading_deg ?? "n/a"}°</strong></div> : null}
                   {"registration" in selected ? <div><span>Registration</span><strong>{selected.registration ?? "n/a"}</strong></div> : null}
                   {"operator" in selected ? <div><span>Operator</span><strong>{selected.operator ?? "n/a"}</strong></div> : null}
                   {"vessel_type" in selected ? <div><span>Type</span><strong>{selected.vessel_type ?? "n/a"}</strong></div> : null}
+                  {"catalog_number" in selected ? <div><span>NORAD</span><strong>{selected.catalog_number}</strong></div> : null}
+                  {"international_designator" in selected ? <div><span>Intl Designator</span><strong>{selected.international_designator ?? "n/a"}</strong></div> : null}
+                  {"group_name" in selected ? <div><span>Group</span><strong>{selected.group_name ?? "n/a"}</strong></div> : null}
+                  {"orbit_class" in selected ? <div><span>Orbit</span><strong>{selected.orbit_class ?? "n/a"}</strong></div> : null}
                 </>
               ) : (
                 <p className="muted">Analyst context appears here when an entity is selected.</p>
@@ -1298,20 +1494,22 @@ export default function App() {
             </div>
           )}
 
-          {detailTab === "timeline" && (
-            <div className="stack-list">
-              {[...aircraftTracks, ...vesselTracks]
-                .filter((track) => !selected || track.entity_id === selected.id)
-                .slice(0, 8)
-                .map((track) => (
-                  <div key={track.entity_id} className="list-card static">
-                    <span>{track.label}</span>
-                    <small>{track.points.length} observations</small>
-                  </div>
-                ))}
-              {!aircraftTracks.length && !vesselTracks.length && <p className="muted">Switch to replay mode to inspect movement history.</p>}
-            </div>
-          )}
+              {detailTab === "timeline" && (
+                <div className="stack-list">
+                  {[...aircraftTracks, ...vesselTracks, ...satelliteTracks]
+                    .filter((track) => !selected || track.entity_id === selected.id)
+                    .slice(0, 8)
+                    .map((track) => (
+                      <div key={track.entity_id} className="list-card static">
+                        <span>{track.label}</span>
+                        <small>{track.points.length} observations</small>
+                      </div>
+                    ))}
+                  {!aircraftTracks.length && !vesselTracks.length && !satelliteTracks.length && (
+                    <p className="muted">Switch to replay mode or select a live track to inspect movement history.</p>
+                  )}
+                </div>
+              )}
 
           {detailTab === "notes" && (
             <div className="notes-pane">

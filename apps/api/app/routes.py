@@ -19,6 +19,7 @@ from .schemas import (
     SavedViewRecord,
     SavedViewUpdate,
     SearchResult,
+    Satellite,
     TagAssignment,
     TagAssignmentCreate,
     TagCreate,
@@ -79,6 +80,24 @@ def vessels_history(
     since = since or _default_since()
     until = until or datetime.now(timezone.utc)
     return repo.vessel_history(since, until, bbox, entity_id, limit)
+
+
+@router.get("/api/satellites/current", response_model=list[Satellite])
+def satellites_current(bbox: str | None = Query(default=None), limit: int = Query(default=2000, le=5000)) -> list[dict]:
+    return repo.list_satellites_current(bbox, limit)
+
+
+@router.get("/api/satellites/history", response_model=TimelineResponse)
+def satellites_history(
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    bbox: str | None = Query(default=None),
+    entity_id: str | None = Query(default=None),
+    limit: int = Query(default=30000, le=120000),
+) -> dict:
+    since = since or _default_since()
+    until = until or datetime.now(timezone.utc)
+    return repo.satellite_history(since, until, bbox, entity_id, limit)
 
 
 @router.get("/api/airspace/current", response_model=list[AirspaceOverlay])

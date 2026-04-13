@@ -10,8 +10,8 @@ from typing import Any
 from redis.asyncio import Redis
 from sqlalchemy import create_engine, text
 
-from source_adapters import AISStreamAdapter, FAAAirspaceAdapter, OpenSkyAdapter
-from source_adapters.canonical import AirspaceOverlayRecord, AircraftSnapshot, LiveEnvelope, VesselSnapshot
+from source_adapters import AISStreamAdapter, CelesTrakSatelliteAdapter, FAAAirspaceAdapter, OpenSkyAdapter
+from source_adapters.canonical import AirspaceOverlayRecord, AircraftSnapshot, LiveEnvelope, SatelliteSnapshot, VesselSnapshot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 LOGGER = logging.getLogger("eagle-eye-worker")
@@ -23,6 +23,62 @@ LIVE_CHANNEL = "eagle-eye:live"
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
+
+SATELLITE_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS satellites_current (
+      id TEXT PRIMARY KEY,
+      catalog_number TEXT NOT NULL,
+      satellite_name TEXT NOT NULL,
+      international_designator TEXT,
+      group_name TEXT,
+      orbit_class TEXT,
+      geom geometry(Point, 4326) NOT NULL,
+      altitude_m DOUBLE PRECISION,
+      velocity_kts DOUBLE PRECISION,
+      tle_epoch TIMESTAMPTZ,
+      source TEXT NOT NULL,
+      source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+      observed_at TIMESTAMPTZ NOT NULL,
+      raw_reference TEXT,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_geom ON satellites_current USING GIST (geom)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_observed_at ON satellites_current (observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_current_catalog ON satellites_current (catalog_number)",
+    """
+    CREATE TABLE IF NOT EXISTS satellites_history (
+      history_id BIGSERIAL PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      catalog_number TEXT NOT NULL,
+      satellite_name TEXT NOT NULL,
+      international_designator TEXT,
+      group_name TEXT,
+      orbit_class TEXT,
+      geom geometry(Point, 4326) NOT NULL,
+      altitude_m DOUBLE PRECISION,
+      velocity_kts DOUBLE PRECISION,
+      tle_epoch TIMESTAMPTZ,
+      source TEXT NOT NULL,
+      source_confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+      observed_at TIMESTAMPTZ NOT NULL,
+      raw_reference TEXT,
+      raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_entity_time ON satellites_history (entity_id, observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_observed_at ON satellites_history (observed_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_satellites_history_geom ON satellites_history USING GIST (geom)",
+)
+
+
+def ensure_runtime_schema() -> None:
+    with engine.begin() as conn:
+        for statement in SATELLITE_DDL:
+            conn.execute(text(statement))
 
 
 def persist_aircraft(records: list[AircraftSnapshot]) -> None:
@@ -173,6 +229,60 @@ def persist_airspace(records: list[AirspaceOverlayRecord]) -> None:
         )
 
 
+def persist_satellites(records: list[SatelliteSnapshot]) -> None:
+    if not records:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO satellites_current (
+                  id, catalog_number, satellite_name, international_designator, group_name, orbit_class, geom,
+                  altitude_m, velocity_kts, tle_epoch, source, source_confidence, observed_at, raw_reference, raw_payload, updated_at
+                )
+                VALUES (
+                  :id, :catalog_number, :satellite_name, :international_designator, :group_name, :orbit_class,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :altitude_m, :velocity_kts, :tle_epoch,
+                  :source, :source_confidence, :observed_at, :raw_reference, CAST(:raw_payload AS jsonb), NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                  catalog_number = EXCLUDED.catalog_number,
+                  satellite_name = EXCLUDED.satellite_name,
+                  international_designator = EXCLUDED.international_designator,
+                  group_name = EXCLUDED.group_name,
+                  orbit_class = EXCLUDED.orbit_class,
+                  geom = EXCLUDED.geom,
+                  altitude_m = EXCLUDED.altitude_m,
+                  velocity_kts = EXCLUDED.velocity_kts,
+                  tle_epoch = EXCLUDED.tle_epoch,
+                  source = EXCLUDED.source,
+                  source_confidence = EXCLUDED.source_confidence,
+                  observed_at = EXCLUDED.observed_at,
+                  raw_reference = EXCLUDED.raw_reference,
+                  raw_payload = EXCLUDED.raw_payload,
+                  updated_at = NOW()
+                """
+            ),
+            [{**record.to_dict(), "raw_payload": json.dumps(record.raw_payload)} for record in records],
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO satellites_history (
+                  entity_id, catalog_number, satellite_name, international_designator, group_name, orbit_class, geom,
+                  altitude_m, velocity_kts, tle_epoch, source, source_confidence, observed_at, raw_reference, raw_payload
+                )
+                VALUES (
+                  :id, :catalog_number, :satellite_name, :international_designator, :group_name, :orbit_class,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), :altitude_m, :velocity_kts, :tle_epoch,
+                  :source, :source_confidence, :observed_at, :raw_reference, CAST(:raw_payload AS jsonb)
+                )
+                """
+            ),
+            [{**record.to_dict(), "raw_payload": json.dumps(record.raw_payload)} for record in records],
+        )
+
+
 async def publish(topic: str, payload: dict[str, Any]) -> None:
     envelope = LiveEnvelope(topic=topic, action="upsert", payload=payload)
     await redis.publish(LIVE_CHANNEL, json.dumps(envelope.to_dict(), default=str))
@@ -225,6 +335,20 @@ async def airspace_loop() -> None:
         await asyncio.sleep(20 * 60)
 
 
+async def satellite_loop() -> None:
+    adapter = CelesTrakSatelliteAdapter()
+    while True:
+        try:
+            records = await adapter.fetch_current()
+            persist_satellites(records)
+            for record in records[:300]:
+                await publish("satellite", record.to_dict())
+            LOGGER.info("CelesTrak cycle persisted %s satellites", len(records))
+        except Exception as exc:  # pragma: no cover - network recovery path
+            LOGGER.warning("Satellite ingest failed: %s", exc)
+        await asyncio.sleep(45)
+
+
 async def retention_loop() -> None:
     while True:
         cutoff = datetime.now(timezone.utc)
@@ -257,14 +381,25 @@ async def retention_loop() -> None:
                 ),
                 {"cutoff": cutoff},
             )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM satellites_history
+                    WHERE observed_at < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
         LOGGER.info("Retention cleanup completed.")
         await asyncio.sleep(60 * 60)
 
 
 async def main() -> None:
+    ensure_runtime_schema()
     await asyncio.gather(
         aircraft_loop(),
         vessel_loop(),
+        satellite_loop(),
         airspace_loop(),
         retention_loop(),
     )

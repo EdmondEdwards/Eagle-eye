@@ -3,6 +3,7 @@
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   --accent-aircraft: #ffd54a;
   --accent-vessel: #6ee7ff;
+  --accent-satellite: #9af6b0;
   --accent-airspace: #ff9b3d;
   --panel-strong: rgba(7, 15, 24, 0.94);
   --panel-soft: rgba(10, 20, 34, 0.86);
@@ -255,7 +256,7 @@ button {
 
 .tracker-metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 

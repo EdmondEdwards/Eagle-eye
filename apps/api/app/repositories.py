@@ -103,6 +103,36 @@ def list_vessels_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
     )
 
 
+def list_satellites_current(bbox: str | None, limit: int) -> list[dict[str, Any]]:
+    bbox_clause, bbox_params = _build_envelope_clause(bbox)
+    return fetch_all(
+        f"""
+        SELECT
+          id,
+          catalog_number,
+          satellite_name,
+          international_designator,
+          group_name,
+          orbit_class,
+          ST_Y(geom) AS lat,
+          ST_X(geom) AS lon,
+          altitude_m,
+          velocity_kts,
+          tle_epoch,
+          source,
+          source_confidence,
+          observed_at,
+          raw_reference
+        FROM satellites_current
+        WHERE 1 = 1
+        {bbox_clause}
+        ORDER BY observed_at DESC, satellite_name ASC
+        LIMIT :limit
+        """,
+        {**bbox_params, "limit": limit},
+    )
+
+
 def list_airspace_current(at: datetime | None) -> list[dict[str, Any]]:
     reference_time = at or datetime.now(timezone.utc)
     return fetch_all(
@@ -201,6 +231,67 @@ def aircraft_history(since: datetime, until: datetime, bbox: str | None, entity_
 
 def vessel_history(since: datetime, until: datetime, bbox: str | None, entity_id: str | None, limit: int) -> dict[str, Any]:
     return _history_query("vessels_history", "vessel", since, until, bbox, entity_id, limit)
+
+
+def satellite_history(since: datetime, until: datetime, bbox: str | None, entity_id: str | None, limit: int) -> dict[str, Any]:
+    bbox_clause, bbox_params = _build_envelope_clause(bbox)
+    entity_clause = "AND entity_id = :entity_id" if entity_id else ""
+    params: dict[str, Any] = {
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+        "limit": limit,
+        **bbox_params,
+    }
+    if entity_id:
+        params["entity_id"] = entity_id
+
+    rows = fetch_all(
+        f"""
+        SELECT
+          entity_id,
+          ST_Y(geom) AS lat,
+          ST_X(geom) AS lon,
+          observed_at,
+          altitude_m,
+          velocity_kts,
+          satellite_name,
+          catalog_number
+        FROM satellites_history
+        WHERE observed_at BETWEEN :since AND :until
+        {entity_clause}
+        {bbox_clause}
+        ORDER BY entity_id, observed_at ASC
+        LIMIT :limit
+        """,
+        params,
+    )
+
+    tracks: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = row.get("satellite_name") or row.get("catalog_number") or row["entity_id"]
+        track = tracks.setdefault(
+            row["entity_id"],
+            {
+                "entity_id": row["entity_id"],
+                "label": label,
+                "entity_kind": "satellite",
+                "points": [],
+            },
+        )
+        track["points"].append(
+            {
+                "lat": row["lat"],
+                "lon": row["lon"],
+                "observed_at": row["observed_at"],
+                "altitude_m": row.get("altitude_m"),
+                "velocity_kts": row.get("velocity_kts"),
+            }
+        )
+
+    return {
+        "window": {"from": since, "to": until},
+        "tracks": list(tracks.values()),
+    }
 
 
 def _group_entities(rows: list[dict[str, Any]], key_name: str) -> dict[str, list[dict[str, Any]]]:
@@ -509,6 +600,28 @@ def search(query: str) -> list[dict[str, Any]]:
             }
             for row in nearby
         )
+        nearby_satellites = fetch_all(
+            """
+            SELECT id, satellite_name AS label, source, observed_at, ST_Y(geom) AS lat, ST_X(geom) AS lon
+            FROM satellites_current
+            WHERE ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, 175000)
+            ORDER BY observed_at DESC
+            LIMIT 5
+            """,
+            {"lat": lat, "lon": lon},
+        )
+        results.extend(
+            {
+                "kind": "satellite",
+                "id": row["id"],
+                "label": row.get("label") or row["id"],
+                "subtitle": "Satellite near coordinate",
+                "source": row.get("source"),
+                "observed_at": row.get("observed_at"),
+                "location": {"lat": row["lat"], "lon": row["lon"]},
+            }
+            for row in nearby_satellites
+        )
 
     like = f"%{query.lower()}%"
     results.extend(
@@ -533,6 +646,23 @@ def search(query: str) -> list[dict[str, Any]]:
             WHERE LOWER(COALESCE(vessel_name, '')) LIKE :like OR LOWER(mmsi) LIKE :like OR LOWER(COALESCE(imo, '')) LIKE :like
             ORDER BY observed_at DESC
             LIMIT 10
+            """,
+            {"like": like},
+        )
+    )
+    results.extend(
+        fetch_all(
+            """
+            SELECT 'satellite' AS kind, id, satellite_name AS label,
+            COALESCE(group_name, catalog_number) AS subtitle, source, observed_at,
+            json_build_object('lat', ST_Y(geom), 'lon', ST_X(geom)) AS location
+            FROM satellites_current
+            WHERE LOWER(satellite_name) LIKE :like
+               OR LOWER(catalog_number) LIKE :like
+               OR LOWER(COALESCE(international_designator, '')) LIKE :like
+               OR LOWER(COALESCE(group_name, '')) LIKE :like
+            ORDER BY observed_at DESC
+            LIMIT 12
             """,
             {"like": like},
         )

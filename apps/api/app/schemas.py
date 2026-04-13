@@ -42,6 +42,24 @@ class Vessel(BaseModel):
     raw_reference: str | None = None
 
 
+class Satellite(BaseModel):
+    id: str
+    catalog_number: str
+    satellite_name: str
+    international_designator: str | None = None
+    group_name: str | None = None
+    orbit_class: str | None = None
+    lat: float
+    lon: float
+    altitude_m: float | None = None
+    velocity_kts: float | None = None
+    tle_epoch: datetime | None = None
+    source: str
+    source_confidence: float
+    observed_at: datetime
+    raw_reference: str | None = None
+
+
 class AirspaceOverlay(BaseModel):
     id: str
     source_id: str
@@ -69,7 +87,7 @@ class TimelinePoint(BaseModel):
 class TimelineTrack(BaseModel):
     entity_id: str
     label: str
-    entity_kind: Literal["aircraft", "vessel"]
+    entity_kind: Literal["aircraft", "vessel", "satellite"]
     points: list[TimelinePoint]
 
 
@@ -79,7 +97,7 @@ class TimelineResponse(BaseModel):
 
 
 class CaseEntity(BaseModel):
-    entity_kind: Literal["aircraft", "vessel", "airspace"]
+    entity_kind: Literal["aircraft", "vessel", "satellite", "airspace"]
     entity_id: str
     role: str | None = None
 
@@ -183,7 +201,7 @@ class TagAssignmentCreate(BaseModel):
 
 class WatchlistEntity(BaseModel):
     id: UUID
-    entity_kind: Literal["aircraft", "vessel"]
+    entity_kind: Literal["aircraft", "vessel", "satellite"]
     entity_id: str
     label: str | None = None
     created_at: datetime
@@ -214,7 +232,7 @@ class WatchlistUpdate(BaseModel):
 
 
 class WatchlistEntityCreate(BaseModel):
-    entity_kind: Literal["aircraft", "vessel"]
+    entity_kind: Literal["aircraft", "vessel", "satellite"]
     entity_id: str
     label: str | None = None
 
@@ -266,4 +284,3 @@ class SearchResult(BaseModel):
     source: str | None = None
     observed_at: datetime | None = None
     location: dict[str, float] | None = None
-

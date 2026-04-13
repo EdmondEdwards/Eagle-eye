@@ -59,6 +59,32 @@ class VesselSnapshot:
 
 
 @dataclass(slots=True)
+class SatelliteSnapshot:
+    id: str
+    catalog_number: str
+    satellite_name: str
+    international_designator: str | None
+    group_name: str | None
+    orbit_class: str | None
+    lat: float
+    lon: float
+    altitude_m: float | None
+    velocity_kts: float | None
+    tle_epoch: datetime | None = None
+    source: str = "celestrak"
+    source_confidence: float = 0.74
+    observed_at: datetime = field(default_factory=utc_now)
+    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["observed_at"] = self.observed_at.isoformat()
+        payload["tle_epoch"] = self.tle_epoch.isoformat() if self.tle_epoch else None
+        return payload
+
+
+@dataclass(slots=True)
 class AirspaceOverlayRecord:
     id: str
     source_id: str
@@ -101,4 +127,3 @@ class LiveEnvelope:
 
     def to_dict(self) -> dict[str, Any]:
         return {"topic": self.topic, "action": self.action, "payload": self.payload}
-
