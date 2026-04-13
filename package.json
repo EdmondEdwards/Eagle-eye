@@ -1,0 +1,15 @@
+{
+  "name": "eagle-eye",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/web",
+    "packages/shared-types",
+    "packages/ui"
+  ],
+  "scripts": {
+    "build:web": "npm --workspace @eagle-eye/web run build",
+    "dev:web": "npm --workspace @eagle-eye/web run dev"
+  }
+}
+

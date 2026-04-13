@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@eagle-eye/shared-types": ["../../packages/shared-types/src/index.ts"],
+      "@eagle-eye/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
+
