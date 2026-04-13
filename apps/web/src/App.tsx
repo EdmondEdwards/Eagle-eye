@@ -252,6 +252,54 @@ function isPointInView(lat: number, lon: number, bounds: ViewBounds | null): boo
   return insideLon && lat >= bounds.south && lat <= bounds.north;
 }
 
+function viewWindowLabel(bounds: ViewBounds | null): string {
+  if (!bounds?.bbox) {
+    return "Global window";
+  }
+
+  const width = bounds.crossesAntimeridian ? bounds.east + 360 - bounds.west : bounds.east - bounds.west;
+  const height = bounds.north - bounds.south;
+  return `${Math.max(1, Math.round(width))}° × ${Math.max(1, Math.round(height))}° window`;
+}
+
+function zoomBandLabel(cameraHeight: number): string {
+  if (cameraHeight >= 14_000_000) return "Orbital";
+  if (cameraHeight >= 7_000_000) return "Theater";
+  if (cameraHeight >= 2_500_000) return "Regional";
+  if (cameraHeight >= 900_000) return "Sector";
+  return "Local";
+}
+
+function formatCameraAltitude(cameraHeight: number): string {
+  if (cameraHeight >= 1_000_000) {
+    return `${(cameraHeight / 1_000_000).toFixed(1)} Mm`;
+  }
+  if (cameraHeight >= 1_000) {
+    return `${Math.round(cameraHeight / 1_000)} km`;
+  }
+  return `${Math.round(cameraHeight)} m`;
+}
+
+function trimVisibleEntities<T extends { id: string }>(items: T[], maxItems: number, pinnedId?: string | null): T[] {
+  if (items.length <= maxItems) {
+    return items;
+  }
+
+  const stride = Math.max(1, Math.ceil(items.length / maxItems));
+  const sampled = items.filter((_, index) => index % stride === 0).slice(0, maxItems);
+
+  if (!pinnedId || sampled.some((item) => item.id === pinnedId)) {
+    return sampled;
+  }
+
+  const pinned = items.find((item) => item.id === pinnedId);
+  if (!pinned) {
+    return sampled;
+  }
+
+  return [pinned, ...sampled.slice(0, maxItems - 1)];
+}
+
 function createPropertyBag(payload: GlobeEntityPayload): PropertyBag {
   return new PropertyBag({
     kind: payload.kind,
@@ -302,6 +350,63 @@ function isVesselPayload(payload: unknown): payload is Vessel {
   );
 }
 
+function toSelectedEntity(payload: GlobeEntityPayload): SelectedEntity {
+  if (payload.kind === "aircraft") {
+    return { kind: "aircraft", ...payload.data };
+  }
+  if (payload.kind === "vessel") {
+    return { kind: "vessel", ...payload.data };
+  }
+  return { kind: "airspace", ...payload.data };
+}
+
+function flyCameraToLocation(
+  viewer: Viewer,
+  lat: number,
+  lon: number,
+  altitude: number,
+  headingDeg = 0,
+  pitchDeg = -72,
+  duration = 1.15
+) {
+  viewer.camera.flyTo({
+    destination: Cartesian3.fromDegrees(lon, lat, altitude),
+    orientation: {
+      heading: CesiumMath.toRadians(headingDeg),
+      pitch: CesiumMath.toRadians(pitchDeg),
+      roll: 0
+    },
+    duration
+  });
+}
+
+function focusEntityInViewer(viewer: Viewer, entity: SelectedEntity): boolean {
+  if (!entity) {
+    return false;
+  }
+
+  if ("lat" in entity) {
+    flyCameraToLocation(
+      viewer,
+      entity.lat,
+      entity.lon,
+      entity.kind === "aircraft" ? 1_050_000 : 1_400_000,
+      entity.heading_deg ?? 0,
+      entity.kind === "aircraft" ? -66 : -69,
+      1.2
+    );
+    return true;
+  }
+
+  const centroid = centroidFromAirspace(entity);
+  if (!centroid) {
+    return false;
+  }
+
+  flyCameraToLocation(viewer, centroid.lat, centroid.lon, 2_800_000, 0, -76, 1.2);
+  return true;
+}
+
 export default function App() {
   const viewerRef = useRef<Viewer | null>(null);
   const viewerHostRef = useRef<HTMLDivElement | null>(null);
@@ -327,6 +432,7 @@ export default function App() {
   const [status, setStatus] = useState("Loading operational picture...");
   const [activePreset, setActivePreset] = useState<string>("global");
   const [viewBounds, setViewBounds] = useState<ViewBounds | null>(null);
+  const [cameraHeight, setCameraHeight] = useState(22_000_000);
 
   const selectedNotes = useMemo(
     () =>
@@ -356,6 +462,21 @@ export default function App() {
     () => vessels.filter((item) => isPointInView(item.lat, item.lon, viewBounds)).slice(0, 1400),
     [vessels, viewBounds]
   );
+  const aircraftRenderBudget = cameraHeight >= 12_000_000 ? 900 : cameraHeight >= 5_500_000 ? 1_500 : 2_200;
+  const vesselRenderBudget = cameraHeight >= 12_000_000 ? 420 : cameraHeight >= 5_500_000 ? 850 : 1_400;
+  const renderedAircraft = useMemo(
+    () => trimVisibleEntities(visibleAircraft, aircraftRenderBudget, selected?.kind === "aircraft" ? selected.id : null),
+    [aircraftRenderBudget, selected, visibleAircraft]
+  );
+  const renderedVessels = useMemo(
+    () => trimVisibleEntities(visibleVessels, vesselRenderBudget, selected?.kind === "vessel" ? selected.id : null),
+    [selected, vesselRenderBudget, visibleVessels]
+  );
+  const zoomBand = useMemo(() => zoomBandLabel(cameraHeight), [cameraHeight]);
+  const renderedTrackCount = renderedAircraft.length + renderedVessels.length;
+  const aircraftLabelsEnabled = cameraHeight < 6_500_000;
+  const vesselLabelsEnabled = cameraHeight < 4_200_000;
+  const vectorsEnabled = cameraHeight < 8_500_000;
 
   useEffect(() => {
     viewQueryRef.current = viewQuery;
@@ -364,15 +485,7 @@ export default function App() {
   function flyToPreset(preset: CameraPreset) {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(preset.lon, preset.lat, preset.altitude),
-      orientation: {
-        heading: CesiumMath.toRadians(preset.headingDeg ?? 0),
-        pitch: CesiumMath.toRadians(preset.pitchDeg ?? -76),
-        roll: 0
-      },
-      duration: 1.15
-    });
+    flyCameraToLocation(viewer, preset.lat, preset.lon, preset.altitude, preset.headingDeg ?? 0, preset.pitchDeg ?? -76, 1.15);
     setActivePreset(preset.key);
   }
 
@@ -391,40 +504,16 @@ export default function App() {
   function focusSelection() {
     const viewer = viewerRef.current;
     if (!viewer || !selected) return;
-
-    if ("lat" in selected) {
-      viewer.camera.flyTo({
-        destination: Cartesian3.fromDegrees(selected.lon, selected.lat, selected.kind === "aircraft" ? 1_050_000 : 1_400_000),
-        orientation: {
-          heading: CesiumMath.toRadians(selected.heading_deg ?? 0),
-          pitch: CesiumMath.toRadians(-68),
-          roll: 0
-        },
-        duration: 1.2
-      });
+    if (focusEntityInViewer(viewer, selected)) {
       setActivePreset("selection");
-      return;
     }
-
-    const centroid = centroidFromAirspace(selected);
-    if (!centroid) return;
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(centroid.lon, centroid.lat, 2_800_000),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-76),
-        roll: 0
-      },
-      duration: 1.2
-    });
-    setActivePreset("selection");
   }
 
   function focusTraffic() {
     const viewer = viewerRef.current;
     if (!viewer) return;
 
-    const entities = [...aircraft, ...vessels];
+    const entities = [...visibleAircraft, ...visibleVessels];
     if (entities.length === 0) return;
 
     const sampled = entities.slice(0, 250);
@@ -437,15 +526,7 @@ export default function App() {
     const span = Math.max(latMax - latMin, lonMax - lonMin);
     const altitude = Math.min(12_000_000, Math.max(1_800_000, span * 155_000));
 
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(lon, lat, altitude),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-76),
-        roll: 0
-      },
-      duration: 1.15
-    });
+    flyCameraToLocation(viewer, lat, lon, altitude, 0, -76, 1.15);
     setActivePreset("traffic");
   }
 
@@ -479,7 +560,10 @@ export default function App() {
       destination: Cartesian3.fromDegrees(-20, 28, 22_000_000),
       duration: 0
     });
-    const syncViewBounds = () => setViewBounds(buildViewBounds(viewer));
+    const syncViewBounds = () => {
+      setViewBounds(buildViewBounds(viewer));
+      setCameraHeight(viewer.camera.positionCartographic.height);
+    };
     viewer.camera.moveEnd.addEventListener(syncViewBounds);
     window.setTimeout(syncViewBounds, 0);
 
@@ -499,6 +583,19 @@ export default function App() {
         setSelected({ kind: "airspace", ...payload.data });
       }
     }, ScreenSpaceEventType.LEFT_CLICK);
+    handler.setInputAction((movement: { position: Cartesian2 }) => {
+      const picked = viewer.scene.pick(movement.position);
+      const entity = picked && "id" in picked ? (picked.id as Entity) : null;
+      const payload = readPayload(entity, viewer.clock.currentTime);
+      if (!payload) {
+        return;
+      }
+      const nextSelected = toSelectedEntity(payload);
+      setSelected(nextSelected);
+      if (focusEntityInViewer(viewer, nextSelected)) {
+        setActivePreset("selection");
+      }
+    }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
     viewerRef.current = viewer;
     return () => {
@@ -612,7 +709,7 @@ export default function App() {
     viewer.entities.removeAll();
 
     if (layers.aircraft) {
-      visibleAircraft.forEach((item) => {
+      renderedAircraft.forEach((item) => {
         const isSelected = selectedKey === `aircraft:${item.id}`;
         const vectorDistanceNm = Math.max(12, Math.min(42, (item.velocity_kts ?? 280) / 12));
         const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
@@ -631,12 +728,13 @@ export default function App() {
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.9 : 0.72,
-            scaleByDistance: new NearFarScalar(180_000, isSelected ? 0.42 : 0.24, 22_000_000, isSelected ? 1.02 : 0.86),
+            scale: isSelected ? 0.82 : 0.62,
+            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.3 : 0.18, 22_000_000, isSelected ? 1.04 : 0.88),
             color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
-          label: {
+          label: isSelected || aircraftLabelsEnabled
+            ? {
                 text: aircraftLabel(item, isSelected),
                 font: isSelected ? "600 13px IBM Plex Sans" : "600 11px IBM Plex Sans",
                 fillColor: Color.fromCssColorString("#dbe7f4"),
@@ -651,8 +749,9 @@ export default function App() {
                 scaleByDistance: new NearFarScalar(180_000, 1, 6_000_000, 0.7),
                 distanceDisplayCondition: new DistanceDisplayCondition(0, isSelected ? 12_000_000 : 3_600_000),
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
-              },
-          polyline: vectorEnd
+              }
+            : undefined,
+          polyline: vectorsEnabled && vectorEnd
             ? {
                 positions: [
                   Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
@@ -670,7 +769,7 @@ export default function App() {
     }
 
     if (layers.vessels) {
-      visibleVessels.forEach((item) => {
+      renderedVessels.forEach((item) => {
         const isSelected = selectedKey === `vessel:${item.id}`;
         const vectorDistanceNm = Math.max(2, Math.min(12, (item.speed_kts ?? 16) / 2.2));
         const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
@@ -689,12 +788,12 @@ export default function App() {
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.82 : 0.66,
-            scaleByDistance: new NearFarScalar(180_000, isSelected ? 0.38 : 0.22, 22_000_000, isSelected ? 0.92 : 0.78),
+            scale: isSelected ? 0.72 : 0.56,
+            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.24 : 0.15, 22_000_000, isSelected ? 0.9 : 0.74),
             color: Color.fromCssColorString(isSelected ? VESSEL_SELECTED_COLOR : VESSEL_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
-          label: item.vessel_name?.trim() || isSelected
+          label: (item.vessel_name?.trim() && vesselLabelsEnabled) || isSelected
             ? {
                 text: vesselLabel(item, isSelected),
                 font: isSelected ? "600 12px IBM Plex Sans" : "600 10px IBM Plex Sans",
@@ -712,7 +811,7 @@ export default function App() {
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
               }
             : undefined,
-          polyline: vectorEnd
+          polyline: vectorsEnabled && vectorEnd
             ? {
                 positions: [
                   Cartesian3.fromDegrees(item.lon, item.lat, 0),
@@ -743,7 +842,19 @@ export default function App() {
         }
       });
     });
-  }, [visibleAircraft, visibleVessels, aircraftTracks, vesselTracks, layers.aircraft, layers.vessels, selected, selectedKey]);
+  }, [
+    aircraftLabelsEnabled,
+    aircraftTracks,
+    layers.aircraft,
+    layers.vessels,
+    renderedAircraft,
+    renderedVessels,
+    selected,
+    selectedKey,
+    vesselLabelsEnabled,
+    vesselTracks,
+    vectorsEnabled
+  ]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -915,11 +1026,11 @@ export default function App() {
           <div className="source-list">
             <div className="source-row">
               <strong>OpenSky</strong>
-              <span>{aircraft.length} aircraft</span>
+              <span>{renderedAircraft.length} rendered</span>
             </div>
             <div className="source-row">
               <strong>AISStream</strong>
-              <span>{vessels.length} vessels</span>
+              <span>{renderedVessels.length} rendered</span>
             </div>
             <div className="source-row">
               <strong>FAA TFR</strong>
@@ -1000,15 +1111,7 @@ export default function App() {
                 className="search-result"
                 onClick={() => {
                   if (result.location && viewerRef.current) {
-                    viewerRef.current.camera.flyTo({
-                      destination: Cartesian3.fromDegrees(result.location.lon, result.location.lat, 1_500_000),
-                      orientation: {
-                        heading: CesiumMath.toRadians(0),
-                        pitch: CesiumMath.toRadians(-68),
-                        roll: 0
-                      },
-                      duration: 1.15
-                    });
+                    flyCameraToLocation(viewerRef.current, result.location.lat, result.location.lon, 1_500_000, 0, -68, 1.15);
                     setActivePreset("search");
                   }
                 }}
@@ -1026,21 +1129,26 @@ export default function App() {
             <div className="tracker-badge">LIVE TRAFFIC PICTURE</div>
             <div className="tracker-metrics">
               <div className="tracker-metric">
-                <strong>{visibleAircraft.length.toLocaleString()}</strong>
-                <span>Aircraft visible</span>
+                <strong>{renderedAircraft.length.toLocaleString()}</strong>
+                <span>Aircraft rendered</span>
               </div>
               <div className="tracker-metric">
-                <strong>{visibleVessels.length.toLocaleString()}</strong>
-                <span>Vessels visible</span>
+                <strong>{renderedVessels.length.toLocaleString()}</strong>
+                <span>Vessels rendered</span>
               </div>
               <div className="tracker-metric">
-                <strong>{airspace.length.toLocaleString()}</strong>
-                <span>Airspace</span>
+                <strong>{formatCameraAltitude(cameraHeight)}</strong>
+                <span>Camera altitude</span>
               </div>
             </div>
             <div className="tracker-focus">
               <span className="muted">Focus</span>
               <strong>{selected ? entityLabel(selected) : "Global traffic"}</strong>
+            </div>
+            <div className="tracker-status-line">
+              <span>{zoomBand} view</span>
+              <span>{viewWindowLabel(viewBounds)}</span>
+              <span>{renderedTrackCount.toLocaleString()} tracks drawn</span>
             </div>
             <div className="tracker-preset-strip">
               {cameraPresets.map((preset) => (
@@ -1053,6 +1161,7 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <div className="tracker-tip">Double-click a track to dive in. Traffic fits the current in-view picture.</div>
           </div>
           <div className="camera-rail">
             <button className="camera-action primary" onClick={() => focusTraffic()}>

@@ -146,6 +146,15 @@ button {
   border-bottom: 1px solid rgba(148, 163, 184, 0.08);
 }
 
+.source-row strong {
+  font-size: 0.94rem;
+  letter-spacing: 0.01em;
+}
+
+.source-row span {
+  font-variant-numeric: tabular-nums;
+}
+
 .source-row:last-child,
 .detail-grid > div:last-child {
   border-bottom: 0;
@@ -278,6 +287,29 @@ button {
 
 .tracker-focus strong {
   font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.tracker-status-line {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tracker-status-line span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(14, 26, 40, 0.82);
+  color: #c8d7e7;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.tracker-tip {
+  color: #8aa0b6;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .tracker-preset-strip {
@@ -319,6 +351,11 @@ button {
   display: grid;
   gap: 10px;
   justify-items: stretch;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: linear-gradient(180deg, rgba(7, 15, 24, 0.82), rgba(10, 21, 33, 0.68));
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.28);
 }
 
 .camera-zoom {
