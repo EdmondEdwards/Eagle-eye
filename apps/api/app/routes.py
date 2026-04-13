@@ -46,7 +46,7 @@ def health() -> dict[str, str]:
 
 
 @router.get("/api/aircraft/current", response_model=list[Aircraft])
-def aircraft_current(bbox: str | None = Query(default=None), limit: int = Query(default=1000, le=5000)) -> list[dict]:
+def aircraft_current(bbox: str | None = Query(default=None), limit: int = Query(default=5000, le=10000)) -> list[dict]:
     return repo.list_aircraft_current(bbox, limit)
 
 
@@ -64,7 +64,7 @@ def aircraft_history(
 
 
 @router.get("/api/vessels/current", response_model=list[Vessel])
-def vessels_current(bbox: str | None = Query(default=None), limit: int = Query(default=1000, le=5000)) -> list[dict]:
+def vessels_current(bbox: str | None = Query(default=None), limit: int = Query(default=5000, le=10000)) -> list[dict]:
     return repo.list_vessels_current(bbox, limit)
 
 

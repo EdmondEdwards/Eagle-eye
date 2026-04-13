@@ -39,11 +39,11 @@ export function websocketUrl(): string {
 
 export const api = {
   getAircraftCurrent: (bbox?: string) =>
-    requestJson<Aircraft[]>(`/api/aircraft/current${bbox ? `?bbox=${encodeURIComponent(bbox)}` : ""}`),
+    requestJson<Aircraft[]>(`/api/aircraft/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getAircraftHistory: (params: URLSearchParams) =>
     requestJson<TimelineResponse>(`/api/aircraft/history?${params.toString()}`),
   getVesselsCurrent: (bbox?: string) =>
-    requestJson<Vessel[]>(`/api/vessels/current${bbox ? `?bbox=${encodeURIComponent(bbox)}` : ""}`),
+    requestJson<Vessel[]>(`/api/vessels/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
   getVesselsHistory: (params: URLSearchParams) =>
     requestJson<TimelineResponse>(`/api/vessels/history?${params.toString()}`),
   getAirspaceCurrent: () => requestJson<AirspaceOverlay[]>("/api/airspace/current"),
@@ -76,4 +76,3 @@ export function connectLiveFeed(onMessage: (message: LiveEnvelope) => void): Web
   };
   return socket;
 }
-

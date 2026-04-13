@@ -6,8 +6,8 @@ import {
   GeoJsonDataSource,
   Ion,
   JulianDate,
+  LabelStyle,
   Math as CesiumMath,
-  PinBuilder,
   PropertyBag,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -49,6 +49,21 @@ const defaultLayers: LayerState = {
   airspace: true,
   webcams: false
 };
+
+const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <path fill="#6ee7ff" d="M35 2l5 18 18 5v6l-18 5-5 26h-6l-5-26-18-5v-6l18-5 5-18z"/>
+    <path fill="#07111c" fill-opacity="0.32" d="M32 10l3 11 11 3-11 3-3 18-3-18-11-3 11-3z"/>
+  </svg>
+`)}`;
+
+const VESSEL_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+    <path fill="#4ade80" d="M8 38h48l-4 10-20 10L12 48z"/>
+    <path fill="#4ade80" d="M22 18h20v16H22z"/>
+    <path fill="#07111c" fill-opacity="0.28" d="M26 22h12v8H26z"/>
+  </svg>
+`)}`;
 
 function isoNowMinus(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
@@ -261,7 +276,7 @@ export default function App() {
             const index = next.findIndex((item) => item.id === payload.id);
             if (index >= 0) next[index] = payload;
             else next.unshift(payload);
-            return next.slice(0, 1200);
+            return next.slice(0, 5000);
           });
         }
 
@@ -275,7 +290,7 @@ export default function App() {
             const index = next.findIndex((item) => item.id === payload.id);
             if (index >= 0) next[index] = payload;
             else next.unshift(payload);
-            return next.slice(0, 1200);
+            return next.slice(0, 5000);
           });
         }
 
@@ -307,16 +322,32 @@ export default function App() {
     const viewer = viewerRef.current;
     viewer.entities.removeAll();
 
-    const pinBuilder = new PinBuilder();
     if (layers.aircraft) {
       aircraft.forEach((item) => {
         viewer.entities.add({
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
           billboard: {
-            image: pinBuilder.fromColor(Color.fromCssColorString("#6ee7ff"), 28).toDataURL(),
-            verticalOrigin: VerticalOrigin.BOTTOM
+            image: AIRCRAFT_ICON,
+            verticalOrigin: VerticalOrigin.CENTER,
+            rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
+            alignedAxis: Cartesian3.UNIT_Z,
+            scale: 0.58,
+            color: Color.fromCssColorString("#6ee7ff"),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
+          label: item.callsign?.trim()
+            ? {
+                text: item.callsign.trim(),
+                fillColor: Color.fromCssColorString("#dbe7f4"),
+                outlineColor: Color.fromCssColorString("#07111c"),
+                outlineWidth: 2,
+                style: LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cartesian2(0, 18),
+                scale: 0.42,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
           properties: createPropertyBag({ kind: "aircraft", data: item })
         });
       });
@@ -328,9 +359,26 @@ export default function App() {
           id: item.id,
           position: Cartesian3.fromDegrees(item.lon, item.lat, 0),
           billboard: {
-            image: pinBuilder.fromColor(Color.fromCssColorString("#4ade80"), 26).toDataURL(),
-            verticalOrigin: VerticalOrigin.BOTTOM
+            image: VESSEL_ICON,
+            verticalOrigin: VerticalOrigin.CENTER,
+            rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
+            alignedAxis: Cartesian3.UNIT_Z,
+            scale: 0.7,
+            color: Color.fromCssColorString("#4ade80"),
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
+          label: item.vessel_name?.trim()
+            ? {
+                text: item.vessel_name.trim(),
+                fillColor: Color.fromCssColorString("#dbe7f4"),
+                outlineColor: Color.fromCssColorString("#07111c"),
+                outlineWidth: 2,
+                style: LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cartesian2(0, 18),
+                scale: 0.42,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+              }
+            : undefined,
           properties: createPropertyBag({ kind: "vessel", data: item })
         });
       });
