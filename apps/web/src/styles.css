@@ -228,7 +228,6 @@ button {
   background:
     linear-gradient(180deg, rgba(7, 15, 24, 0.94), rgba(10, 21, 33, 0.86));
   box-shadow: 0 16px 42px rgba(2, 6, 23, 0.36);
-  pointer-events: none;
 }
 
 .tracker-badge {
@@ -279,6 +278,65 @@ button {
 
 .tracker-focus strong {
   font-size: 0.96rem;
+}
+
+.tracker-preset-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tracker-preset,
+.camera-action,
+.detail-actions button {
+  border: 1px solid rgba(255, 213, 74, 0.18);
+  background: rgba(12, 26, 39, 0.98);
+  color: #dbe7f4;
+  border-radius: 10px;
+  padding: 8px 11px;
+  font: inherit;
+  transition: 120ms ease;
+}
+
+.tracker-preset:hover,
+.camera-action:hover,
+.detail-actions button:hover {
+  border-color: rgba(255, 213, 74, 0.42);
+  background: rgba(19, 39, 56, 0.98);
+}
+
+.tracker-preset.active,
+.camera-action.primary {
+  background: rgba(66, 56, 18, 0.92);
+  border-color: rgba(255, 213, 74, 0.48);
+  color: #fff2b8;
+}
+
+.camera-rail {
+  position: absolute;
+  right: 14px;
+  bottom: 18px;
+  display: grid;
+  gap: 10px;
+  justify-items: stretch;
+}
+
+.camera-zoom {
+  display: grid;
+  gap: 8px;
+}
+
+.camera-action.zoom {
+  min-width: 52px;
+  min-height: 42px;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.camera-action:disabled,
+.detail-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .layer-strip {
@@ -356,6 +414,12 @@ button {
   margin: 0;
 }
 
+.detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 .tab-strip {
   display: flex;
   gap: 8px;
@@ -419,5 +483,14 @@ button {
 
   .tracker-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .camera-rail {
+    right: 10px;
+    bottom: 12px;
+  }
+
+  .detail-actions {
+    flex-direction: column;
   }
 }

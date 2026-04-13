@@ -46,6 +46,16 @@ type GlobeEntityPayload =
 
 type LayerState = Record<string, boolean>;
 
+type CameraPreset = {
+  key: string;
+  label: string;
+  lat: number;
+  lon: number;
+  altitude: number;
+  headingDeg?: number;
+  pitchDeg?: number;
+};
+
 const defaultLayers: LayerState = {
   aircraft: true,
   vessels: true,
@@ -57,6 +67,14 @@ const AIRCRAFT_COLOR = "#ffd54a";
 const AIRCRAFT_SELECTED_COLOR = "#fff4b3";
 const VESSEL_COLOR = "#6ee7ff";
 const VESSEL_SELECTED_COLOR = "#b6f4ff";
+
+const cameraPresets: readonly CameraPreset[] = [
+  { key: "global", label: "Global", lat: 28, lon: -20, altitude: 22_000_000, headingDeg: 0, pitchDeg: -90 },
+  { key: "conus", label: "CONUS", lat: 39.5, lon: -98.35, altitude: 5_600_000, headingDeg: 0, pitchDeg: -72 },
+  { key: "europe", label: "Europe", lat: 50.2, lon: 8.6, altitude: 3_600_000, headingDeg: 8, pitchDeg: -70 },
+  { key: "mena", label: "MENA", lat: 27.8, lon: 40.2, altitude: 4_800_000, headingDeg: 12, pitchDeg: -72 },
+  { key: "indo", label: "Indo-Pacific", lat: 13.1, lon: 110.5, altitude: 8_800_000, headingDeg: 18, pitchDeg: -76 }
+];
 
 const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -154,6 +172,39 @@ function vesselLabel(item: Vessel, isSelected: boolean): string {
   return secondary ? `${primary}\n${secondary}` : primary;
 }
 
+function centroidFromAirspace(overlay: AirspaceOverlay): { lat: number; lon: number } | null {
+  const coordinates = overlay.geometry?.coordinates;
+  if (!Array.isArray(coordinates)) {
+    return null;
+  }
+
+  const points: Array<[number, number]> = [];
+
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value)) return;
+    if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
+      points.push([value[0], value[1]]);
+      return;
+    }
+    value.forEach(visit);
+  };
+
+  visit(coordinates);
+  if (points.length === 0) {
+    return null;
+  }
+
+  const [lonSum, latSum] = points.reduce(
+    (acc, [lon, lat]) => [acc[0] + lon, acc[1] + lat],
+    [0, 0]
+  );
+
+  return {
+    lat: latSum / points.length,
+    lon: lonSum / points.length
+  };
+}
+
 function createPropertyBag(payload: GlobeEntityPayload): PropertyBag {
   return new PropertyBag({
     kind: payload.kind,
@@ -226,6 +277,7 @@ export default function App() {
   const [aircraftTracks, setAircraftTracks] = useState<TimelineTrack[]>([]);
   const [vesselTracks, setVesselTracks] = useState<TimelineTrack[]>([]);
   const [status, setStatus] = useState("Loading operational picture...");
+  const [activePreset, setActivePreset] = useState<string>("global");
 
   const selectedNotes = useMemo(
     () =>
@@ -246,6 +298,94 @@ export default function App() {
     [selected, watchlists]
   );
   const selectedKey = selected ? `${selected.kind}:${selected.id}` : null;
+
+  function flyToPreset(preset: CameraPreset) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(preset.lon, preset.lat, preset.altitude),
+      orientation: {
+        heading: CesiumMath.toRadians(preset.headingDeg ?? 0),
+        pitch: CesiumMath.toRadians(preset.pitchDeg ?? -76),
+        roll: 0
+      },
+      duration: 1.15
+    });
+    setActivePreset(preset.key);
+  }
+
+  function zoomCamera(direction: "in" | "out") {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const height = viewer.camera.positionCartographic.height;
+    const nextDelta = Math.max(35_000, height * (direction === "in" ? 0.38 : 0.62));
+    if (direction === "in") {
+      viewer.camera.zoomIn(nextDelta);
+    } else {
+      viewer.camera.zoomOut(nextDelta);
+    }
+  }
+
+  function focusSelection() {
+    const viewer = viewerRef.current;
+    if (!viewer || !selected) return;
+
+    if ("lat" in selected) {
+      viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(selected.lon, selected.lat, selected.kind === "aircraft" ? 1_050_000 : 1_400_000),
+        orientation: {
+          heading: CesiumMath.toRadians(selected.heading_deg ?? 0),
+          pitch: CesiumMath.toRadians(-68),
+          roll: 0
+        },
+        duration: 1.2
+      });
+      setActivePreset("selection");
+      return;
+    }
+
+    const centroid = centroidFromAirspace(selected);
+    if (!centroid) return;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(centroid.lon, centroid.lat, 2_800_000),
+      orientation: {
+        heading: CesiumMath.toRadians(0),
+        pitch: CesiumMath.toRadians(-76),
+        roll: 0
+      },
+      duration: 1.2
+    });
+    setActivePreset("selection");
+  }
+
+  function focusTraffic() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    const entities = [...aircraft, ...vessels];
+    if (entities.length === 0) return;
+
+    const sampled = entities.slice(0, 250);
+    const latMin = Math.min(...sampled.map((item) => item.lat));
+    const latMax = Math.max(...sampled.map((item) => item.lat));
+    const lonMin = Math.min(...sampled.map((item) => item.lon));
+    const lonMax = Math.max(...sampled.map((item) => item.lon));
+    const lat = (latMin + latMax) / 2;
+    const lon = (lonMin + lonMax) / 2;
+    const span = Math.max(latMax - latMin, lonMax - lonMin);
+    const altitude = Math.min(12_000_000, Math.max(1_800_000, span * 155_000));
+
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(lon, lat, altitude),
+      orientation: {
+        heading: CesiumMath.toRadians(0),
+        pitch: CesiumMath.toRadians(-76),
+        roll: 0
+      },
+      duration: 1.15
+    });
+    setActivePreset("traffic");
+  }
 
   useEffect(() => {
     Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_ION_TOKEN ?? "";
@@ -795,8 +935,15 @@ export default function App() {
                 onClick={() => {
                   if (result.location && viewerRef.current) {
                     viewerRef.current.camera.flyTo({
-                      destination: Cartesian3.fromDegrees(result.location.lon, result.location.lat, 1_500_000)
+                      destination: Cartesian3.fromDegrees(result.location.lon, result.location.lat, 1_500_000),
+                      orientation: {
+                        heading: CesiumMath.toRadians(0),
+                        pitch: CesiumMath.toRadians(-68),
+                        roll: 0
+                      },
+                      duration: 1.15
                     });
+                    setActivePreset("search");
                   }
                 }}
               >
@@ -828,6 +975,36 @@ export default function App() {
             <div className="tracker-focus">
               <span className="muted">Focus</span>
               <strong>{selected ? entityLabel(selected) : "Global traffic"}</strong>
+            </div>
+            <div className="tracker-preset-strip">
+              {cameraPresets.map((preset) => (
+                <button
+                  key={preset.key}
+                  className={`tracker-preset ${activePreset === preset.key ? "active" : ""}`}
+                  onClick={() => flyToPreset(preset)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="camera-rail">
+            <button className="camera-action primary" onClick={() => focusTraffic()}>
+              Traffic
+            </button>
+            <button className="camera-action" onClick={() => focusSelection()} disabled={!selected}>
+              Selected
+            </button>
+            <button className="camera-action" onClick={() => flyToPreset(cameraPresets[0])}>
+              Home
+            </button>
+            <div className="camera-zoom">
+              <button className="camera-action zoom" onClick={() => zoomCamera("in")}>
+                +
+              </button>
+              <button className="camera-action zoom" onClick={() => zoomCamera("out")}>
+                -
+              </button>
             </div>
           </div>
           <div className="layer-strip">
@@ -887,6 +1064,14 @@ export default function App() {
           <div className="eyebrow">Selected Entity</div>
           <h2>{entityLabel(selected)}</h2>
           {selected ? <p>{selected.kind.toUpperCase()} · {selected.source}</p> : <p>Pick a track, vessel, or overlay on the globe.</p>}
+          <div className="detail-actions">
+            <button onClick={() => focusSelection()} disabled={!selected}>
+              Focus Track
+            </button>
+            <button onClick={() => flyToPreset(cameraPresets[0])}>
+              Global Reset
+            </button>
+          </div>
         </div>
 
         <div className="panel tab-strip">
