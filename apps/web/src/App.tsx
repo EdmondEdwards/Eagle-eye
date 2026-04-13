@@ -271,12 +271,18 @@ export default function App() {
     viewer.scene.globe.baseColor = Color.fromCssColorString("#07101a");
     viewer.scene.globe.showGroundAtmosphere = false;
     viewer.scene.backgroundColor = Color.fromCssColorString("#02060b");
-    viewer.scene.skyAtmosphere.show = false;
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.show = false;
+    }
     if (viewer.scene.skyBox) {
       viewer.scene.skyBox.show = false;
     }
-    viewer.scene.sun.show = false;
-    viewer.scene.moon.show = false;
+    if (viewer.scene.sun) {
+      viewer.scene.sun.show = false;
+    }
+    if (viewer.scene.moon) {
+      viewer.scene.moon.show = false;
+    }
     viewer.scene.fog.enabled = false;
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
     viewer.camera.flyTo({
@@ -531,7 +537,7 @@ export default function App() {
 
     [...aircraftTracks, ...vesselTracks].forEach((track) => {
       if (track.points.length < 2) return;
-      const isSelected = selected && track.entity_kind === selected.kind && track.entity_id === selected.id;
+      const isSelected = Boolean(selected && track.entity_kind === selected.kind && track.entity_id === selected.id);
       viewer.entities.add({
         id: `${track.entity_kind}:${track.entity_id}:track`,
         polyline: {
