@@ -271,18 +271,6 @@ export default function App() {
     viewer.scene.globe.baseColor = Color.fromCssColorString("#07101a");
     viewer.scene.globe.showGroundAtmosphere = false;
     viewer.scene.backgroundColor = Color.fromCssColorString("#02060b");
-    if (viewer.scene.skyAtmosphere) {
-      viewer.scene.skyAtmosphere.show = false;
-    }
-    if (viewer.scene.skyBox) {
-      viewer.scene.skyBox.show = false;
-    }
-    if (viewer.scene.sun) {
-      viewer.scene.sun.show = false;
-    }
-    if (viewer.scene.moon) {
-      viewer.scene.moon.show = false;
-    }
     viewer.scene.fog.enabled = false;
     viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
     viewer.camera.flyTo({
