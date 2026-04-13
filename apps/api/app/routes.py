@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from . import repositories as repo
 from .schemas import (
@@ -112,9 +112,10 @@ def update_case(case_id: UUID, payload: CaseUpdate) -> dict:
     return record
 
 
-@router.delete("/api/cases/{case_id}", status_code=204)
-def delete_case(case_id: UUID) -> None:
+@router.delete("/api/cases/{case_id}", status_code=204, response_class=Response)
+def delete_case(case_id: UUID) -> Response:
     repo.delete_case(case_id)
+    return Response(status_code=204)
 
 
 @router.get("/api/watchlists", response_model=list[WatchlistRecord])
@@ -135,9 +136,10 @@ def update_watchlist(watchlist_id: UUID, payload: WatchlistUpdate) -> dict:
     return record
 
 
-@router.delete("/api/watchlists/{watchlist_id}", status_code=204)
-def delete_watchlist(watchlist_id: UUID) -> None:
+@router.delete("/api/watchlists/{watchlist_id}", status_code=204, response_class=Response)
+def delete_watchlist(watchlist_id: UUID) -> Response:
     repo.delete_watchlist(watchlist_id)
+    return Response(status_code=204)
 
 
 @router.post("/api/watchlists/{watchlist_id}/entities", response_model=WatchlistEntity)
@@ -145,9 +147,10 @@ def add_watchlist_entity(watchlist_id: UUID, payload: WatchlistEntityCreate) -> 
     return repo.add_watchlist_entity(watchlist_id, payload)
 
 
-@router.delete("/api/watchlists/entities/{entity_row_id}", status_code=204)
-def remove_watchlist_entity(entity_row_id: UUID) -> None:
+@router.delete("/api/watchlists/entities/{entity_row_id}", status_code=204, response_class=Response)
+def remove_watchlist_entity(entity_row_id: UUID) -> Response:
     repo.remove_watchlist_entity(entity_row_id)
+    return Response(status_code=204)
 
 
 @router.get("/api/notes", response_model=list[NoteRecord])
@@ -168,9 +171,10 @@ def update_note(note_id: UUID, payload: NoteUpdate) -> dict:
     return record
 
 
-@router.delete("/api/notes/{note_id}", status_code=204)
-def delete_note(note_id: UUID) -> None:
+@router.delete("/api/notes/{note_id}", status_code=204, response_class=Response)
+def delete_note(note_id: UUID) -> Response:
     repo.delete_note(note_id)
+    return Response(status_code=204)
 
 
 @router.get("/api/tags", response_model=list[TagRecord])
@@ -191,9 +195,10 @@ def update_tag(tag_id: UUID, payload: TagUpdate) -> dict:
     return record
 
 
-@router.delete("/api/tags/{tag_id}", status_code=204)
-def delete_tag(tag_id: UUID) -> None:
+@router.delete("/api/tags/{tag_id}", status_code=204, response_class=Response)
+def delete_tag(tag_id: UUID) -> Response:
     repo.delete_tag(tag_id)
+    return Response(status_code=204)
 
 
 @router.post("/api/tags/{tag_id}/assignments", response_model=TagAssignment)
@@ -201,9 +206,10 @@ def assign_tag(tag_id: UUID, payload: TagAssignmentCreate) -> dict:
     return repo.assign_tag(tag_id, payload)
 
 
-@router.delete("/api/tags/assignments/{assignment_id}", status_code=204)
-def unassign_tag(assignment_id: UUID) -> None:
+@router.delete("/api/tags/assignments/{assignment_id}", status_code=204, response_class=Response)
+def unassign_tag(assignment_id: UUID) -> Response:
     repo.unassign_tag(assignment_id)
+    return Response(status_code=204)
 
 
 @router.get("/api/saved-views", response_model=list[SavedViewRecord])
@@ -224,9 +230,10 @@ def update_saved_view(view_id: UUID, payload: SavedViewUpdate) -> dict:
     return record
 
 
-@router.delete("/api/saved-views/{view_id}", status_code=204)
-def delete_saved_view(view_id: UUID) -> None:
+@router.delete("/api/saved-views/{view_id}", status_code=204, response_class=Response)
+def delete_saved_view(view_id: UUID) -> Response:
     repo.delete_saved_view(view_id)
+    return Response(status_code=204)
 
 
 @router.get("/api/search", response_model=list[SearchResult])
