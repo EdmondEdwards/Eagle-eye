@@ -227,7 +227,14 @@ SATELLITE_DDL = (
       computed_alt_km = COALESCE(computed_alt_km, altitude_m / 1000.0),
       computed_velocity_kms = COALESCE(computed_velocity_kms, velocity_kts / 1943.84)
     WHERE
-      COALESCE(norad_cat_id, catalog_number, name, satellite_name, computed_lat, computed_lon, computed_alt_km, computed_velocity_kms) IS NOT NULL
+      norad_cat_id IS NOT NULL
+      OR catalog_number IS NOT NULL
+      OR name IS NOT NULL
+      OR satellite_name IS NOT NULL
+      OR computed_lat IS NOT NULL
+      OR computed_lon IS NOT NULL
+      OR computed_alt_km IS NOT NULL
+      OR computed_velocity_kms IS NOT NULL
     """,
     """
     UPDATE satellites_history
@@ -240,7 +247,14 @@ SATELLITE_DDL = (
       computed_alt_km = COALESCE(computed_alt_km, altitude_m / 1000.0),
       computed_velocity_kms = COALESCE(computed_velocity_kms, velocity_kts / 1943.84)
     WHERE
-      COALESCE(norad_cat_id, catalog_number, name, satellite_name, computed_lat, computed_lon, computed_alt_km, computed_velocity_kms) IS NOT NULL
+      norad_cat_id IS NOT NULL
+      OR catalog_number IS NOT NULL
+      OR name IS NOT NULL
+      OR satellite_name IS NOT NULL
+      OR computed_lat IS NOT NULL
+      OR computed_lon IS NOT NULL
+      OR computed_alt_km IS NOT NULL
+      OR computed_velocity_kms IS NOT NULL
     """,
 )
 
