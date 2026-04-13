@@ -2,10 +2,13 @@ import {
   Cartesian2,
   Cartesian3,
   Color,
+  Entity,
   GeoJsonDataSource,
   Ion,
+  JulianDate,
   Math as CesiumMath,
   PinBuilder,
+  PropertyBag,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   VerticalOrigin,
@@ -33,6 +36,11 @@ type SelectedEntity =
   | ({ kind: "airspace" } & AirspaceOverlay)
   | null;
 
+type GlobeEntityPayload =
+  | { kind: "aircraft"; data: Aircraft }
+  | { kind: "vessel"; data: Vessel }
+  | { kind: "airspace"; data: AirspaceOverlay };
+
 type LayerState = Record<string, boolean>;
 
 const defaultLayers: LayerState = {
@@ -51,6 +59,22 @@ function entityLabel(entity: SelectedEntity): string {
   if (entity.kind === "aircraft") return entity.callsign?.trim() || entity.icao24;
   if (entity.kind === "vessel") return entity.vessel_name?.trim() || entity.mmsi;
   return entity.name;
+}
+
+function createPropertyBag(payload: GlobeEntityPayload): PropertyBag {
+  return new PropertyBag({
+    kind: payload.kind,
+    data: payload.data
+  });
+}
+
+function readPayload(entity: Entity | null, time: JulianDate): GlobeEntityPayload | null {
+  const value = entity?.properties?.getValue(time) as Partial<GlobeEntityPayload> | undefined;
+  if (!value || !value.kind || !value.data) {
+    return null;
+  }
+
+  return value as GlobeEntityPayload;
 }
 
 export default function App() {
@@ -125,18 +149,17 @@ export default function App() {
     const handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
     handler.setInputAction((movement: { position: Cartesian2 }) => {
       const picked = viewer.scene.pick(movement.position);
-      const entity = picked && "id" in picked ? picked.id : null;
-      if (!entity?.properties) {
+      const entity = picked && "id" in picked ? (picked.id as Entity) : null;
+      const payload = readPayload(entity, viewer.clock.currentTime);
+      if (!payload) {
         return;
       }
-
-      const payload = entity.properties.getValue();
       if (payload.kind === "aircraft") {
-        setSelected({ kind: "aircraft", ...(payload.data as Aircraft) });
+        setSelected({ kind: "aircraft", ...payload.data });
       } else if (payload.kind === "vessel") {
-        setSelected({ kind: "vessel", ...(payload.data as Vessel) });
+        setSelected({ kind: "vessel", ...payload.data });
       } else if (payload.kind === "airspace") {
-        setSelected({ kind: "airspace", ...(payload.data as AirspaceOverlay) });
+        setSelected({ kind: "airspace", ...payload.data });
       }
     }, ScreenSpaceEventType.LEFT_CLICK);
 
@@ -254,10 +277,7 @@ export default function App() {
             image: pinBuilder.fromColor(Color.fromCssColorString("#6ee7ff"), 28).toDataURL(),
             verticalOrigin: VerticalOrigin.BOTTOM
           },
-          properties: {
-            kind: "aircraft",
-            data: item
-          }
+          properties: createPropertyBag({ kind: "aircraft", data: item })
         });
       });
     }
@@ -271,10 +291,7 @@ export default function App() {
             image: pinBuilder.fromColor(Color.fromCssColorString("#4ade80"), 26).toDataURL(),
             verticalOrigin: VerticalOrigin.BOTTOM
           },
-          properties: {
-            kind: "vessel",
-            data: item
-          }
+          properties: createPropertyBag({ kind: "vessel", data: item })
         });
       });
     }
@@ -322,17 +339,19 @@ export default function App() {
           }))
       };
 
-      const source = await GeoJsonDataSource.load(featureCollection, {
+      const source = await GeoJsonDataSource.load(featureCollection as Parameters<typeof GeoJsonDataSource.load>[0], {
         stroke: Color.fromCssColorString("#f59e0b"),
         fill: Color.fromCssColorString("#f59e0b").withAlpha(0.12),
         strokeWidth: 2
       });
 
       source.entities.values.forEach((entity, index) => {
-        entity.properties = {
+        const item = airspace[index];
+        if (!item) return;
+        entity.properties = createPropertyBag({
           kind: "airspace",
-          data: airspace[index]
-        };
+          data: item
+        });
       });
 
       airspaceSourceRef.current = source;
