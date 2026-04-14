@@ -192,7 +192,7 @@ function App() {
   );
 
   async function loadSidebarData() {
-    const [workspaceRows, watchlistRows, sourceRows, caseRows, noteRows, tagRows, aoiRows, liveEvents] = await Promise.all([
+    const results = await Promise.allSettled([
       api.getWorkspaces(),
       api.getWatchlists(),
       api.getSourceStatus(),
@@ -202,14 +202,34 @@ function App() {
       api.getAois(),
       api.getEvents()
     ]);
-    setWorkspaces(workspaceRows);
-    setWatchlists(watchlistRows);
-    setSourceStatus(sourceRows);
-    setCases(caseRows);
-    setNotes(noteRows);
-    setTags(tagRows);
-    setAois(aoiRows);
-    setRecentEvents(liveEvents);
+
+    const [
+      workspaceRows,
+      watchlistRows,
+      sourceRows,
+      caseRows,
+      noteRows,
+      tagRows,
+      aoiRows,
+      liveEvents
+    ] = results;
+
+    if (workspaceRows.status === "fulfilled") setWorkspaces(workspaceRows.value);
+    if (watchlistRows.status === "fulfilled") setWatchlists(watchlistRows.value);
+    if (sourceRows.status === "fulfilled") setSourceStatus(sourceRows.value);
+    if (caseRows.status === "fulfilled") setCases(caseRows.value);
+    if (noteRows.status === "fulfilled") setNotes(noteRows.value);
+    if (tagRows.status === "fulfilled") setTags(tagRows.value);
+    if (aoiRows.status === "fulfilled") setAois(aoiRows.value);
+    if (liveEvents.status === "fulfilled") setRecentEvents(liveEvents.value);
+
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => String(result.reason));
+
+    if (failures.length > 0) {
+      setStatusText(`Partial backend mismatch: ${failures[0]}`);
+    }
   }
 
   async function refreshRelationships(selectedIds: string[]) {
