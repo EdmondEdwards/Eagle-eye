@@ -15,7 +15,7 @@ COPY apps/web /app/apps/web
 COPY packages/shared-types /app/packages/shared-types
 COPY packages/ui /app/packages/ui
 
-ARG VITE_API_BASE_URL=http://localhost:8000
+ARG VITE_API_BASE_URL=
 ARG CESIUM_ION_TOKEN=
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 ENV VITE_CESIUM_ION_TOKEN=${CESIUM_ION_TOKEN}

@@ -52,7 +52,7 @@ services:
       context: .
       dockerfile: infra/docker/web/Dockerfile
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
         CESIUM_ION_TOKEN: ${CESIUM_ION_TOKEN}
     restart: unless-stopped
     depends_on:
@@ -63,4 +63,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-

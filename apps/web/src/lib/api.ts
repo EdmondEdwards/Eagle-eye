@@ -22,10 +22,25 @@ import type {
   WorkspaceRecord
 } from "@eagle-eye/shared-types";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+
+function normalizedBaseUrl(): string {
+  if (!apiBaseUrl) return "";
+  return apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+}
+
+function buildUrl(path: string): string {
+  const base = normalizedBaseUrl();
+  if (!base) return path;
+  if (base.startsWith("http://") || base.startsWith("https://")) {
+    return `${base}${path}`;
+  }
+  return `${base}${path}`;
+}
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const requestUrl = buildUrl(path);
+  const response = await fetch(requestUrl, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -33,16 +48,21 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     }
   });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new Error(`Request failed: ${response.status} ${path}`);
   }
   return response.json() as Promise<T>;
 }
 
 export function websocketUrl(): string {
-  const url = new URL(apiBaseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws/live";
-  return url.toString();
+  const base = normalizedBaseUrl();
+  if (base.startsWith("http://") || base.startsWith("https://")) {
+    const url = new URL(base);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/ws/live";
+    return url.toString();
+  }
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws/live`;
 }
 
 export const api = {
