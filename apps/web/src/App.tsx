@@ -862,8 +862,10 @@ export default function App() {
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.92 : 0.78,
-            scaleByDistance: new NearFarScalar(120_000, isSelected ? 0.12 : 0.09, 22_000_000, isSelected ? 1.18 : 0.94),
+            width: isSelected ? 28 : 22,
+            height: isSelected ? 42 : 32,
+            scale: 1,
+            scaleByDistance: new NearFarScalar(120_000, isSelected ? 0.9 : 0.75, 22_000_000, isSelected ? 0.42 : 0.3),
             color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : aircraftColor),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
