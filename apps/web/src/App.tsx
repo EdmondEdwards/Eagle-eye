@@ -246,7 +246,10 @@ function App() {
       selectedEntity ? [selectedEntity.id] : [],
       selectedAoiIds
     );
-    if (!payload) return;
+    if (!payload) {
+      setStatusText("Camera initializing");
+      return;
+    }
     const response = await api.queryView(payload);
     startTransition(() => {
       setViewData(response);
@@ -268,7 +271,10 @@ function App() {
   useEffect(() => {
     api
       .getTimeState()
-      .then(setTimeState)
+      .then((state) => {
+        setTimeState(state);
+        setStatusText("Backend connected");
+      })
       .catch((error: unknown) => setStatusText(String(error)));
     loadSidebarData().catch((error: unknown) => setStatusText(String(error)));
   }, []);
@@ -292,6 +298,7 @@ function App() {
       destination: Cartesian3.fromDegrees(-20, 24, 19_000_000)
     });
     viewerRef.current = viewer;
+    window.setTimeout(() => scheduleRefresh(50), 400);
 
     const handler = new ScreenSpaceEventHandler(viewer.canvas);
     handler.setInputAction((movement: { position: Cartesian2 }) => {
