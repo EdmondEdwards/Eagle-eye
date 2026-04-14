@@ -35,6 +35,7 @@ export interface Aircraft extends SourceProvenance, GeoPoint {
   callsign?: string | null;
   registration?: string | null;
   operator?: string | null;
+  aircraft_category?: string | null;
   altitude_m?: number | null;
   heading_deg?: number | null;
   velocity_kts?: number | null;

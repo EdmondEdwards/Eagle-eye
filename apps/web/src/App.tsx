@@ -37,6 +37,8 @@ import type {
 } from "@eagle-eye/shared-types";
 import { detailTabs, layerDefinitions } from "@eagle-eye/ui";
 import { api, connectLiveFeed } from "./lib/api";
+import { aircraftColorForAircraft, aircraftIconForAircraft, resolveAircraftCategory } from "./lib/aircraftIconMap";
+import satelliteImage from "./assets/sat.png";
 
 type SelectedEntity =
   | ({ kind: "aircraft" } & Aircraft)
@@ -81,7 +83,6 @@ const defaultLayers: LayerState = {
   webcams: false
 };
 
-const AIRCRAFT_COLOR = "#ffd54a";
 const AIRCRAFT_SELECTED_COLOR = "#fff4b3";
 const VESSEL_COLOR = "#6ee7ff";
 const VESSEL_SELECTED_COLOR = "#b6f4ff";
@@ -96,29 +97,12 @@ const cameraPresets: readonly CameraPreset[] = [
   { key: "indo", label: "Indo-Pacific", lat: 13.1, lon: 110.5, altitude: 8_800_000, headingDeg: 18, pitchDeg: -76 }
 ];
 
-const AIRCRAFT_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#061019" fill-opacity="0.28" d="M32 3.5l4.4 17.4 15.8 8.5v4.1l-13.5 2.8-4 23.3h-5.4l-4-23.3-13.5-2.8v-4.1l15.8-8.5L32 3.5z"/>
-    <path fill="#ffd54a" d="M31.8 2.1c1.4 0 2.5.9 2.8 2.2l3.1 14.2 13.8 7.5c1 .5 1.7 1.6 1.7 2.7v3.6c0 1.3-.9 2.3-2.1 2.6l-11.7 2.5-3.7 21.5c-.2 1.2-1.2 2-2.4 2h-2.5c-1.2 0-2.2-.8-2.4-2l-3.7-21.5-11.7-2.5c-1.2-.3-2.1-1.3-2.1-2.6v-3.6c0-1.1.6-2.2 1.7-2.7l13.8-7.5 3.1-14.2c.3-1.3 1.4-2.2 2.8-2.2z"/>
-    <path fill="#061019" fill-opacity="0.28" d="M30.6 8.5h2.8l2.1 11.1 13.2 7v1.9l-11.2 2.1-2.6 15.1h-1.6l-1.3-8.6-1.3 8.6h-1.6L26.5 30.6l-11.2-2.1v-1.9l13.2-7z"/>
-  </svg>
-`)}`;
-
 const VESSEL_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
     <path fill="#061019" fill-opacity="0.42" d="M8 38h48l-4 10-20 10L12 48z"/>
     <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M9 38h46l-4 10-19 10-19-10z"/>
     <path fill="#6ee7ff" stroke="#061019" stroke-width="2" d="M22 17h20v16H22z"/>
     <path fill="#061019" fill-opacity="0.3" d="M26 22h12v8H26z"/>
-  </svg>
-`)}`;
-
-const SATELLITE_ICON = `data:image/svg+xml;utf8,${encodeURIComponent(`
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-    <path fill="#061019" fill-opacity="0.35" d="M14 18l10 4 8-8 8 8 10-4 2 2-8 10 8 10-2 2-10-4-8 8-8-8-10 4-2-2 8-10-8-10z"/>
-    <path fill="#9af6b0" d="M14 18l10 4 8-8 8 8 10-4 2 2-8 10 8 10-2 2-10-4-8 8-8-8-10 4-2-2 8-10-8-10z"/>
-    <circle cx="32" cy="32" r="7" fill="#061019" fill-opacity="0.34"/>
-    <circle cx="32" cy="32" r="3.4" fill="#dcffd3"/>
   </svg>
 `)}`;
 
@@ -193,7 +177,13 @@ function aircraftLabel(item: Aircraft, isSelected: boolean): string {
     return primary.toUpperCase();
   }
 
-  const secondary = [formatAltitudeFeet(item.altitude_m), formatKnots(item.velocity_kts)].filter(Boolean).join(" • ");
+  const secondary = [
+    resolveAircraftCategory(item).replaceAll("_", " ").toUpperCase(),
+    formatAltitudeFeet(item.altitude_m),
+    formatKnots(item.velocity_kts)
+  ]
+    .filter(Boolean)
+    .join(" • ");
   return secondary ? `${primary.toUpperCase()}\n${secondary}` : primary.toUpperCase();
 }
 
@@ -851,6 +841,7 @@ export default function App() {
     if (layers.aircraft) {
       renderedAircraft.forEach((item) => {
         const isSelected = selectedKey === `aircraft:${item.id}`;
+        const aircraftColor = aircraftColorForAircraft(item);
         const vectorDistanceNm = Math.max(12, Math.min(42, (item.velocity_kts ?? 280) / 12));
         const vectorEnd = projectTrackVector(item.lat, item.lon, item.heading_deg, vectorDistanceNm);
         viewer.entities.add({
@@ -858,21 +849,21 @@ export default function App() {
           position: Cartesian3.fromDegrees(item.lon, item.lat, item.altitude_m ?? 0),
           point: isSelected
             ? {
-                pixelSize: 9,
-                color: Color.fromCssColorString(AIRCRAFT_SELECTED_COLOR).withAlpha(0.22),
+                pixelSize: 7,
+                color: Color.fromCssColorString(AIRCRAFT_SELECTED_COLOR).withAlpha(0.18),
                 outlineColor: Color.fromCssColorString("#0a0f14").withAlpha(0.26),
                 outlineWidth: 1,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY
               }
             : undefined,
           billboard: {
-            image: AIRCRAFT_ICON,
+            image: aircraftIconForAircraft(item),
             verticalOrigin: VerticalOrigin.CENTER,
             rotation: CesiumMath.toRadians(item.heading_deg ?? 0),
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.98 : 0.82,
-            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.22 : 0.16, 22_000_000, isSelected ? 1.38 : 1.16),
-            color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR),
+            scale: isSelected ? 0.92 : 0.78,
+            scaleByDistance: new NearFarScalar(120_000, isSelected ? 0.12 : 0.09, 22_000_000, isSelected ? 1.18 : 0.94),
+            color: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : aircraftColor),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
           label: isSelected || aircraftLabelsEnabled
@@ -900,7 +891,7 @@ export default function App() {
                   Cartesian3.fromDegrees(vectorEnd.lon, vectorEnd.lat, item.altitude_m ?? 0)
                 ],
                 width: isSelected ? 3 : 1.6,
-                material: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : AIRCRAFT_COLOR).withAlpha(isSelected ? 0.9 : 0.48),
+                material: Color.fromCssColorString(isSelected ? AIRCRAFT_SELECTED_COLOR : aircraftColor).withAlpha(isSelected ? 0.9 : 0.48),
                 arcType: ArcType.NONE,
                 distanceDisplayCondition: new DistanceDisplayCondition(0, 9_000_000)
               }
@@ -986,7 +977,7 @@ export default function App() {
               }
             : undefined,
           billboard: {
-            image: SATELLITE_ICON,
+            image: satelliteImage,
             verticalOrigin: VerticalOrigin.CENTER,
             alignedAxis: Cartesian3.UNIT_Z,
             scale: isSelected ? 0.76 : 0.62,
@@ -1603,6 +1594,7 @@ export default function App() {
                   {"heading_deg" in selected ? <div><span>Heading</span><strong>{selected.heading_deg ?? "n/a"}°</strong></div> : null}
                   {"registration" in selected ? <div><span>Registration</span><strong>{selected.registration ?? "n/a"}</strong></div> : null}
                   {"operator" in selected ? <div><span>Operator</span><strong>{selected.operator ?? "n/a"}</strong></div> : null}
+                  {"icao24" in selected ? <div><span>Category</span><strong>{selected.aircraft_category ?? resolveAircraftCategory(selected)}</strong></div> : null}
                   {"vessel_type" in selected ? <div><span>Type</span><strong>{selected.vessel_type ?? "n/a"}</strong></div> : null}
                   {"callsign" in selected ? <div><span>Callsign</span><strong>{selected.callsign ?? "n/a"}</strong></div> : null}
                   {"nav_status" in selected ? <div><span>Nav Status</span><strong>{selected.nav_status ?? "n/a"}</strong></div> : null}
