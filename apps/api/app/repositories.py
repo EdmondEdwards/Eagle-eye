@@ -54,7 +54,7 @@ def get_time_state() -> dict[str, Any]:
           singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
           mode TEXT NOT NULL DEFAULT 'live',
           status TEXT NOT NULL DEFAULT 'playing',
-          current_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          "current_timestamp" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           playback_speed DOUBLE PRECISION NOT NULL DEFAULT 1.0,
           step_seconds INTEGER NOT NULL DEFAULT 60,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -66,14 +66,14 @@ def get_time_state() -> dict[str, Any]:
     )
     execute(
         """
-        INSERT INTO time_state (singleton, mode, status, current_timestamp, playback_speed, step_seconds, updated_at)
+        INSERT INTO time_state (singleton, mode, status, "current_timestamp", playback_speed, step_seconds, updated_at)
         VALUES (TRUE, 'live', 'playing', NOW(), 1.0, 60, NOW())
         ON CONFLICT (singleton) DO NOTHING
         """
     )
     record = fetch_one(
         """
-        SELECT mode, status, current_timestamp, playback_speed, step_seconds, updated_at
+        SELECT mode, status, "current_timestamp", playback_speed, step_seconds, updated_at
         FROM time_state
         WHERE singleton = TRUE
         """
@@ -85,7 +85,7 @@ def get_time_state() -> dict[str, Any]:
         UPDATE time_state
         SET mode = :mode,
             status = :status,
-            current_timestamp = :current_timestamp,
+            "current_timestamp" = :current_timestamp,
             playback_speed = :playback_speed,
             step_seconds = :step_seconds,
             updated_at = :updated_at
@@ -120,7 +120,7 @@ def set_time_state(payload: TimeStateUpdate) -> dict[str, Any]:
         UPDATE time_state
         SET mode = :mode,
             status = :status,
-            current_timestamp = :current_timestamp,
+            "current_timestamp" = :current_timestamp,
             playback_speed = :playback_speed,
             step_seconds = :step_seconds,
             updated_at = NOW()

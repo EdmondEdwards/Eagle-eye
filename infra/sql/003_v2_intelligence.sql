@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS time_state (
   singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
   mode TEXT NOT NULL DEFAULT 'live',
   status TEXT NOT NULL DEFAULT 'playing',
-  current_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "current_timestamp" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   playback_speed DOUBLE PRECISION NOT NULL DEFAULT 1.0,
   step_seconds INTEGER NOT NULL DEFAULT 60,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS time_state (
   CHECK (status IN ('playing', 'paused'))
 );
 
-INSERT INTO time_state (singleton, mode, status, current_timestamp, playback_speed, step_seconds)
+INSERT INTO time_state (singleton, mode, status, "current_timestamp", playback_speed, step_seconds)
 VALUES (TRUE, 'live', 'playing', NOW(), 1.0, 60)
 ON CONFLICT (singleton) DO NOTHING;
 
