@@ -7,190 +7,180 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
-class Aircraft(BaseModel):
+class GlobeViewState(BaseModel):
+    west: float
+    south: float
+    east: float
+    north: float
+    camera_height: float
+    heading: float = 0
+    pitch: float = -90
+    roll: float = 0
+    timestamp: datetime
+    mode: Literal["live", "replay", "simulate"] = "live"
+    enabled_layers: list[str] = Field(default_factory=list)
+    selected_entities: list[str] = Field(default_factory=list)
+    selected_aois: list[str] = Field(default_factory=list)
+
+    @field_validator("enabled_layers", mode="before")
+    @classmethod
+    def _default_layers(cls, value: Any) -> list[str]:
+        if not value:
+            return ["aircraft", "vessels", "satellites", "airspace", "events", "aois"]
+        return list(value)
+
+
+class ClusterRecord(BaseModel):
     id: str
-    icao24: str
-    callsign: str | None = None
-    registration: str | None = None
-    operator: str | None = None
+    entity_kind: Literal["aircraft", "vessel", "satellite", "event"]
+    count: int
     lat: float
     lon: float
-    altitude_m: float | None = None
-    heading_deg: float | None = None
-    velocity_kts: float | None = None
-    vertical_rate: float | None = None
+    sample_ids: list[str] = Field(default_factory=list)
+
+
+class EntityRecord(BaseModel):
+    id: str
+    entity_kind: Literal["aircraft", "vessel", "satellite", "airspace", "aoi"]
+    label: str
+    geometry: dict[str, Any]
+    properties: dict[str, Any] = Field(default_factory=dict)
+    observed_at: datetime
+    predicted_path: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EventRecord(BaseModel):
+    id: UUID
+    event_type: str
+    category: str
+    severity: str
+    title: str
+    summary: str | None = None
+    entity_kind: str | None = None
+    entity_id: str | None = None
+    related_entity_kind: str | None = None
+    related_entity_id: str | None = None
+    geometry: dict[str, Any] | None = None
+    start_time: datetime
+    end_time: datetime | None = None
+    detected_at: datetime
+    status: str
+    confidence: float
     source: str
     source_confidence: float
-    observed_at: datetime
     raw_reference: str | None = None
 
 
-class Vessel(BaseModel):
-    id: str
-    mmsi: str
-    imo: str | None = None
-    vessel_name: str | None = None
-    callsign: str | None = None
-    vessel_type: str | None = None
-    flag: str | None = None
-    lat: float
-    lon: float
-    heading_deg: float | None = None
-    course_deg: float | None = None
-    speed_kts: float | None = None
-    nav_status: str | None = None
-    destination: str | None = None
-    draught_m: float | None = None
+class RelationshipRecord(BaseModel):
+    id: UUID
+    source_kind: str
+    source_id: str
+    target_kind: str
+    target_id: str
+    relationship_type: str
+    strength: float
+    context_event_id: UUID | None = None
+    context_case_id: UUID | None = None
     source: str
-    source_record_id: str | None = None
     source_confidence: float
-    merged_confidence: float | None = None
     observed_at: datetime
-    last_ingested_at: datetime | None = None
-    stale: bool = False
-    raw_reference: str | None = None
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
 
 
-class VesselSourceHealth(BaseModel):
-    provider_name: str
-    ingest_mode: Literal["websocket", "polling", "batch"]
-    enabled: bool
-    priority: int
-    health_state: Literal["healthy", "degraded", "unhealthy", "disabled"]
-    last_success: datetime | None = None
-    last_attempt: datetime | None = None
-    valid_message_count: int
-    error_count: int
-    stall_threshold_seconds: int | None = None
-    last_error: str | None = None
+class ViewQueryResponse(BaseModel):
+    view: GlobeViewState
+    entities: list[EntityRecord]
+    clusters: list[ClusterRecord]
+    events: list[EventRecord]
+    relationships: list[RelationshipRecord]
+    stats: dict[str, int]
+
+
+class TimeState(BaseModel):
+    mode: Literal["live", "paused", "replay", "simulate"]
+    status: Literal["playing", "paused"]
+    current_timestamp: datetime
+    playback_speed: float = 1.0
+    step_seconds: int = 60
     updated_at: datetime
 
 
-class MaritimeProviderDescriptor(BaseModel):
-    provider_name: str
-    ingest_mode: Literal["websocket", "polling", "batch"]
-    priority: int
-    enabled: bool
+class TimeStateUpdate(BaseModel):
+    mode: Literal["live", "paused", "replay", "simulate"] | None = None
+    status: Literal["playing", "paused"] | None = None
+    current_timestamp: datetime | None = None
+    playback_speed: float | None = None
+    step_seconds: int | None = None
+    action: Literal["play", "pause", "step_forward", "step_back", "jump"] | None = None
+
+
+class GeoJsonGeometry(BaseModel):
+    type: str
+    coordinates: Any | None = None
+
+
+class AoiRecord(BaseModel):
+    id: UUID
+    name: str
     description: str | None = None
-
-
-class VesselPresenceOverlay(BaseModel):
-    overlay_id: str
-    provider: str
-    dataset: str
-    label: str
-    category: str
+    geometry_type: Literal["polygon", "rectangle", "circle"]
     geometry: dict[str, Any]
-    density: float | None = None
-    observed_from: datetime
-    observed_to: datetime
+    center: dict[str, Any] | None = None
+    radius_m: float | None = None
+    tags: list[str] = Field(default_factory=list)
     source: str
     source_confidence: float
     observed_at: datetime
-    raw_reference: str | None = None
+    updated_at: datetime
 
 
-class Satellite(BaseModel):
-    id: str
-    norad_cat_id: str
-    international_designator: str | None = None
+class AoiCreate(BaseModel):
     name: str
-    object_type: str | None = None
-    group_name: str | None = None
-    orbit_class: str | None = None
-    tle_line1: str | None = None
-    tle_line2: str | None = None
-    epoch: datetime | None = None
-    inclination_deg: float | None = None
-    eccentricity: float | None = None
-    mean_motion: float | None = None
-    raan_deg: float | None = None
-    arg_perigee_deg: float | None = None
-    mean_anomaly_deg: float | None = None
-    bstar: float | None = None
-    computed_lat: float
-    computed_lon: float
-    computed_alt_km: float | None = None
-    computed_velocity_kms: float | None = None
-    source: str
-    source_confidence: float
-    observed_at: datetime
-    playback_confidence: float | None = None
-    raw_reference: str | None = None
+    description: str | None = None
+    geometry_type: Literal["polygon", "rectangle", "circle"]
+    geometry: GeoJsonGeometry
+    center: dict[str, float] | None = None
+    radius_m: float | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
-class SatelliteCatalogRecord(BaseModel):
-    id: str
-    norad_cat_id: str
-    international_designator: str | None = None
+class WorkspaceRecord(BaseModel):
+    id: UUID
     name: str
-    object_type: str | None = None
-    group_name: str | None = None
-    orbit_class: str | None = None
-    tle_line1: str | None = None
-    tle_line2: str | None = None
-    epoch: datetime | None = None
-    inclination_deg: float | None = None
-    eccentricity: float | None = None
-    mean_motion: float | None = None
-    raan_deg: float | None = None
-    arg_perigee_deg: float | None = None
-    mean_anomaly_deg: float | None = None
-    bstar: float | None = None
+    description: str | None = None
+    camera: dict[str, Any]
+    time_context: dict[str, Any]
+    layers: dict[str, Any]
+    selected_entities: list[str]
+    selected_aois: list[str]
     source: str
-    source_confidence: float
-    observed_at: datetime
-    raw_reference: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
-class AirspaceOverlay(BaseModel):
-    id: str
-    source_id: str
+class WorkspaceCreate(BaseModel):
     name: str
-    category: str
-    geometry: dict[str, Any] | None = None
-    active_from: datetime | None = None
-    active_to: datetime | None = None
-    source: str
-    source_confidence: float
-    observed_at: datetime
-    raw_reference: str | None = None
+    description: str | None = None
+    camera: dict[str, Any]
+    time_context: dict[str, Any]
+    layers: dict[str, Any]
+    selected_entities: list[str] = Field(default_factory=list)
+    selected_aois: list[str] = Field(default_factory=list)
+    source: str = "user"
 
 
-class TimelinePoint(BaseModel):
-    lat: float
-    lon: float
-    observed_at: datetime
-    altitude_m: float | None = None
-    alt_km: float | None = None
-    heading_deg: float | None = None
-    velocity_kts: float | None = None
-    velocity_kms: float | None = None
-    speed_kts: float | None = None
-    confidence: float | None = None
-
-
-class TimelineTrack(BaseModel):
-    entity_id: str
-    label: str
-    entity_kind: Literal["aircraft", "vessel", "satellite"]
-    points: list[TimelinePoint]
-
-
-class TimelineResponse(BaseModel):
-    window: dict[str, datetime]
-    tracks: list[TimelineTrack]
-
-
-class OrbitPathResponse(BaseModel):
-    norad_cat_id: str
-    source: str
-    epoch: datetime | None = None
-    points: list[TimelinePoint]
+class WorkspaceUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    camera: dict[str, Any] | None = None
+    time_context: dict[str, Any] | None = None
+    layers: dict[str, Any] | None = None
+    selected_entities: list[str] | None = None
+    selected_aois: list[str] | None = None
 
 
 class CaseEntity(BaseModel):
-    entity_kind: Literal["aircraft", "vessel", "satellite", "airspace"]
+    entity_kind: str
     entity_id: str
     role: str | None = None
 
@@ -216,14 +206,6 @@ class CaseCreate(BaseModel):
     entities: list[CaseEntity] = Field(default_factory=list)
 
 
-class CaseUpdate(BaseModel):
-    title: str | None = None
-    summary: str | None = None
-    status: str | None = None
-    priority: str | None = None
-    entities: list[CaseEntity] | None = None
-
-
 class NoteRecord(BaseModel):
     id: UUID
     case_id: UUID | None = None
@@ -244,17 +226,37 @@ class NoteCreate(BaseModel):
     author: str = "local-analyst"
     source: str = "user"
 
-    @field_validator("body")
-    @classmethod
-    def validate_body(cls, value: str) -> str:
-        cleaned = value.strip()
-        if not cleaned:
-            raise ValueError("body must not be empty")
-        return cleaned
+
+class WatchlistEntityRecord(BaseModel):
+    id: UUID
+    entity_kind: str
+    entity_id: str
+    label: str | None = None
+    created_at: datetime
 
 
-class NoteUpdate(BaseModel):
-    body: str | None = None
+class WatchlistRecord(BaseModel):
+    id: UUID
+    name: str
+    description: str | None = None
+    color: str
+    source: str
+    created_at: datetime
+    updated_at: datetime
+    entities: list[WatchlistEntityRecord] = Field(default_factory=list)
+
+
+class WatchlistCreate(BaseModel):
+    name: str
+    description: str | None = None
+    color: str = "#6ee7ff"
+    source: str = "user"
+
+
+class WatchlistEntityCreate(BaseModel):
+    entity_kind: str
+    entity_id: str
+    label: str | None = None
 
 
 class TagRecord(BaseModel):
@@ -272,109 +274,15 @@ class TagCreate(BaseModel):
     source: str = "user"
 
 
-class TagUpdate(BaseModel):
-    name: str | None = None
-    color: str | None = None
+class SatelliteFovResponse(BaseModel):
+    satellite_id: str
+    timestamp: datetime
+    footprint: dict[str, Any]
+    cone: dict[str, Any]
+    swath_km: float
 
 
-class TagAssignment(BaseModel):
-    id: UUID
-    tag_id: UUID
-    case_id: UUID | None = None
-    entity_kind: str | None = None
-    entity_id: str | None = None
-    created_at: datetime
-
-
-class TagAssignmentCreate(BaseModel):
-    tag_id: UUID
-    case_id: UUID | None = None
-    entity_kind: str | None = None
-    entity_id: str | None = None
-
-
-class WatchlistEntity(BaseModel):
-    id: UUID
-    entity_kind: Literal["aircraft", "vessel", "satellite"]
-    entity_id: str
-    label: str | None = None
-    created_at: datetime
-
-
-class WatchlistRecord(BaseModel):
-    id: UUID
-    name: str
-    description: str | None = None
-    color: str
-    source: str
-    created_at: datetime
-    updated_at: datetime
-    entities: list[WatchlistEntity] = Field(default_factory=list)
-
-
-class WatchlistCreate(BaseModel):
-    name: str
-    description: str | None = None
-    color: str = "#4ade80"
-    source: str = "user"
-
-
-class WatchlistUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    color: str | None = None
-
-
-class WatchlistEntityCreate(BaseModel):
-    entity_kind: Literal["aircraft", "vessel", "satellite"]
-    entity_id: str
-    label: str | None = None
-
-
-class SavedViewRecord(BaseModel):
-    id: UUID
-    name: str
-    description: str | None = None
-    center_lat: float
-    center_lon: float
-    center_altitude: float
-    heading_deg: float
-    pitch_deg: float
-    roll_deg: float
-    layers: dict[str, bool]
-    created_at: datetime
-    updated_at: datetime
-
-
-class SavedViewCreate(BaseModel):
-    name: str
-    description: str | None = None
-    center_lat: float
-    center_lon: float
-    center_altitude: float
-    heading_deg: float
-    pitch_deg: float
-    roll_deg: float
-    layers: dict[str, bool] = Field(default_factory=dict)
-
-
-class SavedViewUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    center_lat: float | None = None
-    center_lon: float | None = None
-    center_altitude: float | None = None
-    heading_deg: float | None = None
-    pitch_deg: float | None = None
-    roll_deg: float | None = None
-    layers: dict[str, bool] | None = None
-
-
-class SearchResult(BaseModel):
-    kind: str
-    id: str
-    label: str
-    subtitle: str | None = None
-    source: str | None = None
-    observed_at: datetime | None = None
-    location: dict[str, float] | None = None
+class SatellitePassResponse(BaseModel):
+    satellite_id: str
+    target: dict[str, Any]
+    passes: list[dict[str, Any]]

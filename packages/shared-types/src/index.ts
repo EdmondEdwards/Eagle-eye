@@ -1,166 +1,177 @@
-export type SourceName =
-  | "opensky"
-  | "aisstream"
-  | "aishub"
-  | "global_fishing_watch"
-  | "celestrak"
-  | "spacetrack"
-  | "n2yo"
-  | "faa_tfr"
-  | "webcam_catalog_placeholder"
-  | "user"
-  | "system";
+export type TimeMode = "live" | "paused" | "replay" | "simulate";
+export type PlaybackStatus = "playing" | "paused";
 
-export interface SourceProvenance {
-  source: SourceName | string;
-  source_confidence: number;
+export interface GlobeViewState {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+  camera_height: number;
+  heading: number;
+  pitch: number;
+  roll: number;
+  timestamp: string;
+  mode: "live" | "replay" | "simulate";
+  enabled_layers: string[];
+  selected_entities: string[];
+  selected_aois: string[];
+}
+
+export interface TimeState {
+  mode: TimeMode;
+  status: PlaybackStatus;
+  current_timestamp: string;
+  playback_speed: number;
+  step_seconds: number;
+  updated_at: string;
+}
+
+export interface ClusterRecord {
+  id: string;
+  entity_kind: "aircraft" | "vessel" | "satellite" | "event";
+  count: number;
+  lat: number;
+  lon: number;
+  sample_ids: string[];
+}
+
+export interface EntityRecord {
+  id: string;
+  entity_kind: "aircraft" | "vessel" | "satellite" | "airspace" | "aoi";
+  label: string;
+  geometry: GeoJsonGeometry;
+  properties: Record<string, unknown>;
   observed_at: string;
+  predicted_path: TimelinePoint[];
+}
+
+export interface EventRecord {
+  id: string;
+  event_type: string;
+  category: string;
+  severity: string;
+  title: string;
+  summary?: string | null;
+  entity_kind?: string | null;
+  entity_id?: string | null;
+  related_entity_kind?: string | null;
+  related_entity_id?: string | null;
+  geometry?: GeoJsonGeometry | null;
+  start_time: string;
+  end_time?: string | null;
+  detected_at: string;
+  status: string;
+  confidence: number;
+  source: string;
+  source_confidence: number;
   raw_reference?: string | null;
 }
 
-export interface GeoPoint {
-  lat: number;
-  lon: number;
+export interface RelationshipRecord {
+  id: string;
+  source_kind: string;
+  source_id: string;
+  target_kind: string;
+  target_id: string;
+  relationship_type: string;
+  strength: number;
+  context_event_id?: string | null;
+  context_case_id?: string | null;
+  source: string;
+  source_confidence: number;
+  observed_at: string;
+  raw_payload: Record<string, unknown>;
+}
+
+export interface ViewQueryResponse {
+  view: GlobeViewState;
+  entities: EntityRecord[];
+  clusters: ClusterRecord[];
+  events: EventRecord[];
+  relationships: RelationshipRecord[];
+  stats: Record<string, number>;
 }
 
 export interface GeoJsonGeometry {
   type: string;
   coordinates?: unknown;
-  geometries?: GeoJsonGeometry[];
 }
 
-export interface Aircraft extends SourceProvenance, GeoPoint {
+export interface Aircraft {
   id: string;
   icao24: string;
   callsign?: string | null;
   registration?: string | null;
   operator?: string | null;
   aircraft_category?: string | null;
+  lat: number;
+  lon: number;
   altitude_m?: number | null;
   heading_deg?: number | null;
   velocity_kts?: number | null;
   vertical_rate?: number | null;
 }
 
-export interface Vessel extends SourceProvenance, GeoPoint {
+export interface Vessel {
   id: string;
   mmsi: string;
-  imo?: string | null;
   vessel_name?: string | null;
   callsign?: string | null;
-  vessel_type?: string | null;
-  flag?: string | null;
+  lat: number;
+  lon: number;
   heading_deg?: number | null;
   course_deg?: number | null;
   speed_kts?: number | null;
-  nav_status?: string | null;
-  destination?: string | null;
-  draught_m?: number | null;
-  source_record_id?: string | null;
-  merged_confidence?: number | null;
-  last_ingested_at?: string | null;
-  stale?: boolean;
 }
 
-export interface VesselSourceHealthRecord {
-  provider_name: string;
-  ingest_mode: "websocket" | "polling" | "batch";
-  enabled: boolean;
-  priority: number;
-  health_state: "healthy" | "degraded" | "unhealthy" | "disabled";
-  last_success?: string | null;
-  last_attempt?: string | null;
-  valid_message_count: number;
-  error_count: number;
-  stall_threshold_seconds?: number | null;
-  last_error?: string | null;
-  updated_at: string;
-}
-
-export interface MaritimeProviderDescriptor {
-  provider_name: string;
-  ingest_mode: "websocket" | "polling" | "batch";
-  priority: number;
-  enabled: boolean;
-  description?: string | null;
-}
-
-export interface VesselPresenceOverlayRecord extends SourceProvenance {
-  overlay_id: string;
-  provider: string;
-  dataset: string;
-  label: string;
-  category: string;
-  geometry: GeoJsonGeometry;
-  density?: number | null;
-  observed_from: string;
-  observed_to: string;
-}
-
-export interface Satellite extends SourceProvenance {
+export interface Satellite {
   id: string;
   norad_cat_id: string;
-  international_designator?: string | null;
   name: string;
-  object_type?: string | null;
-  group_name?: string | null;
-  orbit_class?: string | null;
-  tle_line1?: string | null;
-  tle_line2?: string | null;
-  epoch?: string | null;
-  inclination_deg?: number | null;
-  eccentricity?: number | null;
-  mean_motion?: number | null;
-  raan_deg?: number | null;
-  arg_perigee_deg?: number | null;
-  mean_anomaly_deg?: number | null;
-  bstar?: number | null;
   computed_lat: number;
   computed_lon: number;
   computed_alt_km?: number | null;
-  computed_velocity_kms?: number | null;
-  playback_confidence?: number | null;
 }
 
-export interface SatelliteCatalogRecord extends SourceProvenance {
+export interface TimelinePoint {
+  lat: number;
+  lon: number;
+  observed_at: string;
+  altitude_m?: number | null;
+  confidence?: number | null;
+}
+
+export interface AoiRecord {
   id: string;
-  norad_cat_id: string;
-  international_designator?: string | null;
   name: string;
-  object_type?: string | null;
-  group_name?: string | null;
-  orbit_class?: string | null;
-  tle_line1?: string | null;
-  tle_line2?: string | null;
-  epoch?: string | null;
-  inclination_deg?: number | null;
-  eccentricity?: number | null;
-  mean_motion?: number | null;
-  raan_deg?: number | null;
-  arg_perigee_deg?: number | null;
-  mean_anomaly_deg?: number | null;
-  bstar?: number | null;
+  description?: string | null;
+  geometry_type: "polygon" | "rectangle" | "circle";
+  geometry: GeoJsonGeometry;
+  center?: GeoJsonGeometry | null;
+  radius_m?: number | null;
+  tags: string[];
+  source: string;
+  source_confidence: number;
+  observed_at: string;
+  updated_at: string;
 }
 
-export interface AirspaceOverlay extends SourceProvenance {
+export interface WorkspaceRecord {
   id: string;
-  source_id: string;
   name: string;
-  category: string;
-  geometry?: GeoJsonGeometry | null;
-  active_from?: string | null;
-  active_to?: string | null;
-}
-
-export interface EventPlaceholder extends SourceProvenance {
-  id: string;
-  title: string;
-  category: string;
-  location?: GeoPoint | null;
+  description?: string | null;
+  camera: Record<string, unknown>;
+  time_context: Record<string, unknown>;
+  layers: Record<string, unknown>;
+  selected_entities: string[];
+  selected_aois: string[];
+  source: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CaseEntity {
-  entity_kind: "aircraft" | "vessel" | "satellite" | "airspace";
+  entity_kind: string;
   entity_id: string;
   role?: string | null;
 }
@@ -189,27 +200,9 @@ export interface NoteRecord {
   updated_at: string;
 }
 
-export interface TagRecord {
+export interface WatchlistEntityRecord {
   id: string;
-  name: string;
-  color: string;
-  source: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface TagAssignment {
-  id: string;
-  tag_id: string;
-  case_id?: string | null;
-  entity_kind?: string | null;
-  entity_id?: string | null;
-  created_at: string;
-}
-
-export interface WatchlistEntity {
-  id: string;
-  entity_kind: "aircraft" | "vessel" | "satellite";
+  entity_kind: string;
   entity_id: string;
   label?: string | null;
   created_at: string;
@@ -223,76 +216,34 @@ export interface WatchlistRecord {
   source: string;
   created_at: string;
   updated_at: string;
-  entities: WatchlistEntity[];
+  entities: WatchlistEntityRecord[];
 }
 
-export interface SavedViewRecord {
+export interface TagRecord {
   id: string;
   name: string;
-  description?: string | null;
-  center_lat: number;
-  center_lon: number;
-  center_altitude: number;
-  heading_deg: number;
-  pitch_deg: number;
-  roll_deg: number;
-  layers: Record<string, boolean>;
+  color: string;
+  source: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface TimelinePoint extends GeoPoint {
-  observed_at: string;
-  altitude_m?: number | null;
-  alt_km?: number | null;
-  heading_deg?: number | null;
-  velocity_kts?: number | null;
-  velocity_kms?: number | null;
-  speed_kts?: number | null;
-  confidence?: number | null;
+export interface SatelliteFovResponse {
+  satellite_id: string;
+  timestamp: string;
+  footprint: GeoJsonGeometry & { properties?: Record<string, unknown> };
+  cone: Record<string, unknown>;
+  swath_km: number;
 }
 
-export interface TimelineTrack {
-  entity_id: string;
-  label: string;
-  entity_kind: "aircraft" | "vessel" | "satellite";
-  points: TimelinePoint[];
-}
-
-export interface TimelineResponse {
-  window: {
-    from: string;
-    to: string;
-  };
-  tracks: TimelineTrack[];
-}
-
-export interface OrbitPathResponse {
-  norad_cat_id: string;
-  source: string;
-  epoch?: string | null;
-  points: TimelinePoint[];
-}
-
-export interface SearchResult {
-  kind: string;
-  id: string;
-  label: string;
-  subtitle?: string | null;
-  source?: string | null;
-  observed_at?: string | null;
-  location?: GeoPoint | null;
+export interface SatellitePassResponse {
+  satellite_id: string;
+  target: Record<string, unknown>;
+  passes: Array<Record<string, unknown>>;
 }
 
 export interface LiveEnvelope {
-  topic:
-    | "aircraft"
-    | "vessel"
-    | "satellite"
-    | "airspace"
-    | "vessel.source-health"
-    | "satellite.batch"
-    | "heartbeat";
-  action: "upsert" | "delete";
+  topic: string;
+  action: string;
   payload: Record<string, unknown>;
 }

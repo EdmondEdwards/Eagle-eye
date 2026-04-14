@@ -7,3 +7,4 @@ pydantic==2.10.3
 pydantic-settings==2.6.1
 skyfield==1.49
 eagle-eye-source-adapters @ file:///app/packages/source-adapters
+eagle-eye-simulation @ file:///app/packages/simulation

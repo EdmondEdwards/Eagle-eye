@@ -26,6 +26,7 @@ from source_adapters.n2yo_adapter import N2YOSatelliteAdapter
 from source_adapters.satellite_propagation_service import SatellitePropagationService
 from source_adapters.satellite_provider import SatelliteProvider
 from source_adapters.spacetrack_adapter import SpaceTrackSatelliteAdapter
+from .events import event_loop
 from .maritime import MARITIME_DDL, maritime_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -549,6 +550,7 @@ async def aircraft_loop() -> None:
             persist_aircraft(records)
             for record in records[:250]:
                 await publish("aircraft", record.to_dict())
+            await publish("view.invalidate", {"scope": "aircraft"})
             LOGGER.info("OpenSky cycle persisted %s aircraft", len(records))
             backoff = 15
             await asyncio.sleep(30)
@@ -566,6 +568,7 @@ async def airspace_loop() -> None:
             persist_airspace(records)
             for record in records:
                 await publish("airspace", record.to_dict())
+            await publish("view.invalidate", {"scope": "airspace"})
             LOGGER.info("FAA cycle persisted %s overlays", len(records))
         except Exception as exc:  # pragma: no cover - network recovery path
             LOGGER.warning("FAA ingest failed: %s", exc)
@@ -617,6 +620,7 @@ async def satellite_loop() -> None:
                 persist_satellites(current_records)
                 for record in current_records[:300]:
                     await publish("satellite", record.to_dict())
+                await publish("view.invalidate", {"scope": "satellites"})
                 LOGGER.info("%s cycle persisted %s propagated satellites", provider.provider_name, len(current_records))
             else:
                 LOGGER.warning("Satellite catalog cache is empty; current propagation skipped.")
@@ -693,6 +697,24 @@ async def retention_loop() -> None:
                 ),
                 {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
             )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM events
+                    WHERE start_time < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM relationships
+                    WHERE observed_at < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
         LOGGER.info("Retention cleanup completed.")
         await asyncio.sleep(60 * 60)
 
@@ -704,6 +726,7 @@ async def main() -> None:
         maritime_loop(engine, publish),
         satellite_loop(),
         airspace_loop(),
+        event_loop(engine, publish),
         retention_loop(),
     )
 

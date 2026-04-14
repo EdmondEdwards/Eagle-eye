@@ -1,21 +1,18 @@
 import type {
-  Aircraft,
-  AirspaceOverlay,
+  AoiRecord,
   CaseRecord,
+  EventRecord,
+  GlobeViewState,
   LiveEnvelope,
-  MaritimeProviderDescriptor,
   NoteRecord,
-  OrbitPathResponse,
-  SavedViewRecord,
-  SearchResult,
-  Satellite,
-  SatelliteCatalogRecord,
+  RelationshipRecord,
+  SatelliteFovResponse,
+  SatellitePassResponse,
   TagRecord,
-  TimelineResponse,
-  Vessel,
-  VesselPresenceOverlayRecord,
-  VesselSourceHealthRecord,
-  WatchlistRecord
+  TimeState,
+  ViewQueryResponse,
+  WatchlistRecord,
+  WorkspaceRecord
 } from "@eagle-eye/shared-types";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -28,11 +25,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {})
     }
   });
-
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
-
   return response.json() as Promise<T>;
 }
 
@@ -44,52 +39,46 @@ export function websocketUrl(): string {
 }
 
 export const api = {
-  getAircraftCurrent: (bbox?: string) =>
-    requestJson<Aircraft[]>(`/api/aircraft/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
-  getAircraftHistory: (params: URLSearchParams) =>
-    requestJson<TimelineResponse>(`/api/aircraft/history?${params.toString()}`),
-  getVesselsCurrent: (bbox?: string) =>
-    requestJson<Vessel[]>(`/api/vessels/current?limit=5000${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
-  getVesselsHistory: (params: URLSearchParams) =>
-    requestJson<TimelineResponse>(`/api/vessels/history?${params.toString()}`),
-  getVessel: (mmsi: string) => requestJson<Vessel>(`/api/vessels/${encodeURIComponent(mmsi)}`),
-  searchVessels: (query: string) => requestJson<Vessel[]>(`/api/vessels/search?q=${encodeURIComponent(query)}`),
-  getVesselSourceHealth: () => requestJson<VesselSourceHealthRecord[]>("/api/vessels/source-health"),
-  getVesselProviders: () => requestJson<MaritimeProviderDescriptor[]>("/api/vessels/providers"),
-  getVesselPresenceOverlay: (params?: URLSearchParams) =>
-    requestJson<VesselPresenceOverlayRecord[]>(`/api/vessels/presence-overlay${params ? `?${params.toString()}` : ""}`),
-  getSatellitesCurrent: (bbox?: string) =>
-    requestJson<Satellite[]>(`/api/satellites/current?limit=2500${bbox ? `&bbox=${encodeURIComponent(bbox)}` : ""}`),
-  getSatellitesHistory: (params: URLSearchParams) =>
-    requestJson<TimelineResponse>(`/api/satellites/history?${params.toString()}`),
-  getSatelliteCatalog: (params?: URLSearchParams) =>
-    requestJson<SatelliteCatalogRecord[]>(`/api/satellites/catalog${params ? `?${params.toString()}` : ""}`),
-  getSatellite: (noradCatId: string) => requestJson<Satellite>(`/api/satellites/${encodeURIComponent(noradCatId)}`),
-  getSatelliteOrbit: (noradCatId: string, params?: URLSearchParams) =>
-    requestJson<OrbitPathResponse>(
-      `/api/satellites/${encodeURIComponent(noradCatId)}/orbit${params ? `?${params.toString()}` : ""}`
+  getTimeState: () => requestJson<TimeState>("/api/time/state"),
+  setTimeState: (payload: Partial<TimeState> & { action?: string }) =>
+    requestJson<TimeState>("/api/time/set", { method: "POST", body: JSON.stringify(payload) }),
+  queryView: (payload: GlobeViewState) =>
+    requestJson<ViewQueryResponse>("/api/view/query", { method: "POST", body: JSON.stringify(payload) }),
+  getEvents: () => requestJson<EventRecord[]>("/api/events/live"),
+  getRelationships: (selectedIds?: string[]) =>
+    requestJson<RelationshipRecord[]>(
+      `/api/relationships${selectedIds?.length ? `?selected_ids=${encodeURIComponent(selectedIds.join(","))}` : ""}`
     ),
-  searchSatellites: (query: string, group?: string) =>
-    requestJson<SearchResult[]>(
-      `/api/satellites/search?q=${encodeURIComponent(query)}${group ? `&group=${encodeURIComponent(group)}` : ""}`
-    ),
-  getAirspaceCurrent: () => requestJson<AirspaceOverlay[]>("/api/airspace/current"),
   getCases: () => requestJson<CaseRecord[]>("/api/cases"),
   createCase: (payload: Partial<CaseRecord>) =>
     requestJson<CaseRecord>("/api/cases", { method: "POST", body: JSON.stringify(payload) }),
+  getWorkspaces: () => requestJson<WorkspaceRecord[]>("/api/workspaces"),
+  createWorkspace: (payload: Partial<WorkspaceRecord>) =>
+    requestJson<WorkspaceRecord>("/api/workspaces", { method: "POST", body: JSON.stringify(payload) }),
+  updateWorkspace: (workspaceId: string, payload: Record<string, unknown>) =>
+    requestJson<WorkspaceRecord>(`/api/workspaces/${workspaceId}`, { method: "PUT", body: JSON.stringify(payload) }),
   getWatchlists: () => requestJson<WatchlistRecord[]>("/api/watchlists"),
   createWatchlist: (payload: Partial<WatchlistRecord>) =>
     requestJson<WatchlistRecord>("/api/watchlists", { method: "POST", body: JSON.stringify(payload) }),
+  addWatchlistEntity: (watchlistId: string, payload: Record<string, unknown>) =>
+    requestJson<WatchlistRecord>(`/api/watchlists/${watchlistId}/entities`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   getNotes: () => requestJson<NoteRecord[]>("/api/notes"),
   createNote: (payload: Partial<NoteRecord>) =>
     requestJson<NoteRecord>("/api/notes", { method: "POST", body: JSON.stringify(payload) }),
   getTags: () => requestJson<TagRecord[]>("/api/tags"),
   createTag: (payload: Partial<TagRecord>) =>
     requestJson<TagRecord>("/api/tags", { method: "POST", body: JSON.stringify(payload) }),
-  getSavedViews: () => requestJson<SavedViewRecord[]>("/api/saved-views"),
-  createSavedView: (payload: Partial<SavedViewRecord>) =>
-    requestJson<SavedViewRecord>("/api/saved-views", { method: "POST", body: JSON.stringify(payload) }),
-  search: (query: string) => requestJson<SearchResult[]>(`/api/search?q=${encodeURIComponent(query)}`)
+  getAois: () => requestJson<AoiRecord[]>("/api/aois"),
+  createAoi: (payload: Record<string, unknown>) =>
+    requestJson<AoiRecord>("/api/aois", { method: "POST", body: JSON.stringify(payload) }),
+  getAoiEvents: (aoiId: string) => requestJson<EventRecord[]>(`/api/aois/${aoiId}/events`),
+  getAoiPasses: (aoiId: string) => requestJson<Array<Record<string, unknown>>>(`/api/aois/${aoiId}/passes`),
+  getSatelliteFov: (satelliteId: string) => requestJson<SatelliteFovResponse>(`/api/satellites/${satelliteId}/fov`),
+  getSatellitePasses: (satelliteId: string, params: URLSearchParams) =>
+    requestJson<SatellitePassResponse>(`/api/satellites/${satelliteId}/passes?${params.toString()}`)
 };
 
 export function connectLiveFeed(onMessage: (message: LiveEnvelope) => void): WebSocket {
@@ -98,7 +87,7 @@ export function connectLiveFeed(onMessage: (message: LiveEnvelope) => void): Web
     try {
       onMessage(JSON.parse(event.data) as LiveEnvelope);
     } catch {
-      // Ignore malformed frames from a noisy network edge.
+      // Ignore malformed messages.
     }
   };
   return socket;

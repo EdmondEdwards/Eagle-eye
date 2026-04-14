@@ -345,6 +345,7 @@ async def maritime_loop(engine: Engine, publish: Callable[[str, dict[str, Any]],
                 continue
             persist_vessels(engine, [record])
             await publish("vessel", record.to_dict())
+            await publish("view.invalidate", {"scope": "vessels"})
             await publish_health()
 
     async def poll_aishub(provider: AISHubProvider) -> None:
@@ -355,6 +356,7 @@ async def maritime_loop(engine: Engine, publish: Callable[[str, dict[str, Any]],
                 persist_vessels(engine, records)
                 for record in records[:250]:
                     await publish("vessel", record.to_dict())
+                await publish("view.invalidate", {"scope": "vessels"})
             await publish_health()
             await asyncio.sleep(provider.poll_interval_seconds)
 
@@ -363,6 +365,7 @@ async def maritime_loop(engine: Engine, publish: Callable[[str, dict[str, Any]],
             overlays = await provider.poll_presence_overlay()
             if overlays:
                 persist_presence_overlays(engine, overlays)
+                await publish("view.invalidate", {"scope": "vessel-presence"})
             await publish_health()
             await asyncio.sleep(provider.poll_interval_seconds)
 

@@ -1,49 +1,37 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query
 
 from . import repositories as repo
 from .schemas import (
-    AirspaceOverlay,
-    Aircraft,
-    CaseRecord,
+    AoiCreate,
+    AoiRecord,
     CaseCreate,
-    CaseUpdate,
+    CaseRecord,
+    EventRecord,
+    GlobeViewState,
     NoteCreate,
     NoteRecord,
-    NoteUpdate,
-    OrbitPathResponse,
-    SavedViewCreate,
-    SavedViewRecord,
-    SavedViewUpdate,
-    SearchResult,
-    MaritimeProviderDescriptor,
-    Satellite,
-    SatelliteCatalogRecord,
-    TagAssignment,
-    TagAssignmentCreate,
+    RelationshipRecord,
+    SatelliteFovResponse,
+    SatellitePassResponse,
     TagCreate,
     TagRecord,
-    TagUpdate,
-    TimelineResponse,
-    Vessel,
-    VesselPresenceOverlay,
-    VesselSourceHealth,
+    TimeState,
+    TimeStateUpdate,
+    ViewQueryResponse,
     WatchlistCreate,
-    WatchlistEntity,
     WatchlistEntityCreate,
     WatchlistRecord,
-    WatchlistUpdate,
+    WorkspaceCreate,
+    WorkspaceRecord,
+    WorkspaceUpdate,
 )
 
 router = APIRouter()
-
-
-def _default_since() -> datetime:
-    return datetime.now(timezone.utc) - timedelta(hours=1)
 
 
 @router.get("/health")
@@ -51,196 +39,116 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "api"}
 
 
-@router.get("/api/aircraft/current", response_model=list[Aircraft])
-def aircraft_current(bbox: str | None = Query(default=None), limit: int = Query(default=5000, le=10000)) -> list[dict]:
-    return repo.list_aircraft_current(bbox, limit)
+@router.get("/api/time/state", response_model=TimeState)
+def get_time_state() -> dict:
+    return repo.get_time_state()
 
 
-@router.get("/api/aircraft/history", response_model=TimelineResponse)
-def aircraft_history(
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
-    bbox: str | None = Query(default=None),
-    entity_id: str | None = Query(default=None),
-    limit: int = Query(default=20000, le=100000),
-) -> dict:
-    since = since or _default_since()
-    until = until or datetime.now(timezone.utc)
-    return repo.aircraft_history(since, until, bbox, entity_id, limit)
+@router.post("/api/time/set", response_model=TimeState)
+def set_time_state(payload: TimeStateUpdate) -> dict:
+    return repo.set_time_state(payload)
 
 
-@router.get("/api/vessels/current", response_model=list[Vessel])
-def vessels_current(
-    bbox: str | None = Query(default=None),
-    limit: int = Query(default=5000, le=10000),
-    mmsi: str | None = Query(default=None),
-    imo: str | None = Query(default=None),
-    vessel_name: str | None = Query(default=None),
-    source: str | None = Query(default=None),
-    vessel_type: str | None = Query(default=None),
-    flag: str | None = Query(default=None),
+@router.post("/api/view/query", response_model=ViewQueryResponse)
+def query_view(payload: GlobeViewState) -> dict:
+    return repo.query_view(payload)
+
+
+@router.get("/api/view/entities")
+def view_entities(
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    camera_height: float,
+    timestamp: datetime,
+    mode: str = Query(default="live"),
+    enabled_layers: str = Query(default="aircraft,vessels,satellites,airspace,aois"),
 ) -> list[dict]:
-    return repo.list_vessels_current(
-        bbox,
-        limit,
-        mmsi=mmsi,
-        imo=imo,
-        vessel_name=vessel_name,
-        source=source,
-        vessel_type=vessel_type,
-        flag=flag,
+    view = GlobeViewState(
+        west=west,
+        south=south,
+        east=east,
+        north=north,
+        camera_height=camera_height,
+        timestamp=timestamp,
+        mode=mode,
+        enabled_layers=[item.strip() for item in enabled_layers.split(",") if item.strip()],
     )
+    return repo.list_entities(view)
 
 
-@router.get("/api/vessels/history", response_model=TimelineResponse)
-def vessels_history(
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
-    bbox: str | None = Query(default=None),
-    entity_id: str | None = Query(default=None),
-    mmsi: str | None = Query(default=None),
-    imo: str | None = Query(default=None),
-    vessel_name: str | None = Query(default=None),
-    source: str | None = Query(default=None),
-    vessel_type: str | None = Query(default=None),
-    flag: str | None = Query(default=None),
-    limit: int = Query(default=20000, le=100000),
-) -> dict:
-    since = since or _default_since()
-    until = until or datetime.now(timezone.utc)
-    return repo.vessel_history(
-        since,
-        until,
-        bbox,
-        entity_id,
-        limit,
-        mmsi=mmsi,
-        imo=imo,
-        vessel_name=vessel_name,
-        source=source,
-        vessel_type=vessel_type,
-        flag=flag,
+@router.get("/api/view/events", response_model=list[EventRecord])
+def view_events(
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    camera_height: float,
+    timestamp: datetime,
+    mode: str = Query(default="live"),
+) -> list[dict]:
+    view = GlobeViewState(
+        west=west,
+        south=south,
+        east=east,
+        north=north,
+        camera_height=camera_height,
+        timestamp=timestamp,
+        mode=mode,
+        enabled_layers=["events"],
     )
+    return repo.list_events(view=view)
 
 
-@router.get("/api/vessels/search", response_model=list[Vessel])
-def vessels_search(
-    q: str | None = Query(default=None),
-    bbox: str | None = Query(default=None),
-    limit: int = Query(default=25, le=250),
-    source: str | None = Query(default=None),
-    vessel_type: str | None = Query(default=None),
-    flag: str | None = Query(default=None),
+@router.get("/api/view/satellites")
+def view_satellites(
+    west: float,
+    south: float,
+    east: float,
+    north: float,
+    camera_height: float,
+    timestamp: datetime,
+    mode: str = Query(default="live"),
 ) -> list[dict]:
-    return repo.search_vessels(q=q, bbox=bbox, limit=limit, source=source, vessel_type=vessel_type, flag=flag)
-
-
-@router.get("/api/vessels/source-health", response_model=list[VesselSourceHealth])
-def vessels_source_health() -> list[dict]:
-    return repo.list_vessel_source_health()
-
-
-@router.get("/api/vessels/providers", response_model=list[MaritimeProviderDescriptor])
-def vessels_providers() -> list[dict]:
-    return repo.list_vessel_providers()
-
-
-@router.get("/api/vessels/presence-overlay", response_model=list[VesselPresenceOverlay])
-def vessels_presence_overlay(
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
-    provider: str | None = Query(default=None),
-    limit: int = Query(default=250, le=5000),
-) -> list[dict]:
-    return repo.vessel_presence_overlay(since=since, until=until, provider=provider, limit=limit)
-
-
-@router.get("/api/vessels/{mmsi}", response_model=Vessel)
-def get_vessel(mmsi: str) -> dict:
-    record = repo.get_vessel(mmsi)
-    if not record:
-        raise HTTPException(status_code=404, detail="Vessel not found")
-    return record
-
-
-@router.get("/api/satellites/current", response_model=list[Satellite])
-def satellites_current(
-    bbox: str | None = Query(default=None),
-    limit: int = Query(default=2000, le=5000),
-    norad_cat_id: str | None = Query(default=None),
-    name: str | None = Query(default=None),
-    group: str | None = Query(default=None),
-) -> list[dict]:
-    return repo.list_satellites_current(bbox, limit, norad_cat_id=norad_cat_id, name=name, group=group)
-
-
-@router.get("/api/satellites/catalog", response_model=list[SatelliteCatalogRecord])
-def satellites_catalog(
-    limit: int = Query(default=500, le=5000),
-    norad_cat_id: str | None = Query(default=None),
-    name: str | None = Query(default=None),
-    group: str | None = Query(default=None),
-    object_type: str | None = Query(default=None),
-    orbit_class: str | None = Query(default=None),
-) -> list[dict]:
-    return repo.list_satellites_catalog(
-        limit=limit,
-        norad_cat_id=norad_cat_id,
-        name=name,
-        group=group,
-        object_type=object_type,
-        orbit_class=orbit_class,
+    view = GlobeViewState(
+        west=west,
+        south=south,
+        east=east,
+        north=north,
+        camera_height=camera_height,
+        timestamp=timestamp,
+        mode=mode,
+        enabled_layers=["satellites"],
     )
+    return repo.list_satellites_in_view(view)
 
 
-@router.get("/api/satellites/history", response_model=TimelineResponse)
-def satellites_history(
-    since: datetime | None = Query(default=None),
-    until: datetime | None = Query(default=None),
-    bbox: str | None = Query(default=None),
-    entity_id: str | None = Query(default=None),
-    norad_cat_id: str | None = Query(default=None),
-    limit: int = Query(default=30000, le=120000),
-) -> dict:
-    since = since or _default_since()
-    until = until or datetime.now(timezone.utc)
-    return repo.satellite_history(since, until, bbox, entity_id, limit, norad_cat_id=norad_cat_id)
+@router.get("/api/events", response_model=list[EventRecord])
+def list_events(entity_id: str | None = None, limit: int = Query(default=200, le=500)) -> list[dict]:
+    return repo.list_events(entity_id=entity_id, limit=limit)
 
 
-@router.get("/api/satellites/search", response_model=list[SearchResult])
-def satellites_search(q: str = Query(..., min_length=1), group: str | None = Query(default=None), limit: int = Query(default=20, le=100)) -> list[dict]:
-    return repo.satellite_search(q, group, limit)
-
-
-@router.get("/api/satellites/{norad_cat_id}", response_model=Satellite)
-def get_satellite(norad_cat_id: str) -> dict:
-    record = repo.get_satellite(norad_cat_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Satellite not found")
-    return record
-
-
-@router.get("/api/satellites/{norad_cat_id}/orbit", response_model=OrbitPathResponse)
-def satellite_orbit(
-    norad_cat_id: str,
-    start: datetime | None = Query(default=None),
-    minutes_ahead: int = Query(default=90, ge=15, le=24 * 60),
-    step_seconds: int = Query(default=120, ge=15, le=3600),
-) -> dict:
-    record = repo.satellite_orbit(
-        norad_cat_id,
-        start=start or datetime.now(timezone.utc),
-        minutes_ahead=minutes_ahead,
-        step_seconds=step_seconds,
+@router.get("/api/events/live", response_model=list[EventRecord])
+def list_live_events(limit: int = Query(default=50, le=200)) -> list[dict]:
+    state = repo.get_time_state()
+    view = GlobeViewState(
+        west=-180,
+        south=-85,
+        east=180,
+        north=85,
+        camera_height=36_000_000,
+        timestamp=state["current_timestamp"],
+        mode=state["mode"],
+        enabled_layers=["events"],
     )
-    if not record:
-        raise HTTPException(status_code=404, detail="Satellite not found")
-    return record
+    return repo.list_events(view=view, limit=limit)
 
 
-@router.get("/api/airspace/current", response_model=list[AirspaceOverlay])
-def airspace_current(at: datetime | None = Query(default=None)) -> list[dict]:
-    return repo.list_airspace_current(at)
+@router.get("/api/relationships", response_model=list[RelationshipRecord])
+def list_relationships(selected_ids: str | None = None, limit: int = Query(default=200, le=500)) -> list[dict]:
+    ids = [item.strip() for item in selected_ids.split(",")] if selected_ids else None
+    return repo.list_relationships(selected_ids=ids, limit=limit)
 
 
 @router.get("/api/cases", response_model=list[CaseRecord])
@@ -253,26 +161,22 @@ def create_case(payload: CaseCreate) -> dict:
     return repo.create_case(payload)
 
 
-@router.get("/api/cases/{case_id}", response_model=CaseRecord)
-def get_case(case_id: UUID) -> dict:
-    record = repo.get_case(case_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return record
+@router.get("/api/workspaces", response_model=list[WorkspaceRecord])
+def list_workspaces() -> list[dict]:
+    return repo.list_workspaces()
 
 
-@router.put("/api/cases/{case_id}", response_model=CaseRecord)
-def update_case(case_id: UUID, payload: CaseUpdate) -> dict:
-    record = repo.update_case(case_id, payload)
-    if not record:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return record
+@router.post("/api/workspaces", response_model=WorkspaceRecord)
+def create_workspace(payload: WorkspaceCreate) -> dict:
+    return repo.create_workspace(payload)
 
 
-@router.delete("/api/cases/{case_id}", status_code=204, response_class=Response)
-def delete_case(case_id: UUID) -> Response:
-    repo.delete_case(case_id)
-    return Response(status_code=204)
+@router.put("/api/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def update_workspace(workspace_id: UUID, payload: WorkspaceUpdate) -> dict:
+    row = repo.update_workspace(workspace_id, payload)
+    if not row:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return row
 
 
 @router.get("/api/watchlists", response_model=list[WatchlistRecord])
@@ -285,53 +189,19 @@ def create_watchlist(payload: WatchlistCreate) -> dict:
     return repo.create_watchlist(payload)
 
 
-@router.put("/api/watchlists/{watchlist_id}", response_model=WatchlistRecord)
-def update_watchlist(watchlist_id: UUID, payload: WatchlistUpdate) -> dict:
-    record = repo.update_watchlist(watchlist_id, payload)
-    if not record:
-        raise HTTPException(status_code=404, detail="Watchlist not found")
-    return record
-
-
-@router.delete("/api/watchlists/{watchlist_id}", status_code=204, response_class=Response)
-def delete_watchlist(watchlist_id: UUID) -> Response:
-    repo.delete_watchlist(watchlist_id)
-    return Response(status_code=204)
-
-
-@router.post("/api/watchlists/{watchlist_id}/entities", response_model=WatchlistEntity)
+@router.post("/api/watchlists/{watchlist_id}/entities", response_model=WatchlistRecord)
 def add_watchlist_entity(watchlist_id: UUID, payload: WatchlistEntityCreate) -> dict:
     return repo.add_watchlist_entity(watchlist_id, payload)
 
 
-@router.delete("/api/watchlists/entities/{entity_row_id}", status_code=204, response_class=Response)
-def remove_watchlist_entity(entity_row_id: UUID) -> Response:
-    repo.remove_watchlist_entity(entity_row_id)
-    return Response(status_code=204)
-
-
 @router.get("/api/notes", response_model=list[NoteRecord])
-def list_notes() -> list[dict]:
-    return repo.list_notes()
+def list_notes(limit: int = Query(default=200, le=500)) -> list[dict]:
+    return repo.list_notes(limit)
 
 
 @router.post("/api/notes", response_model=NoteRecord)
 def create_note(payload: NoteCreate) -> dict:
     return repo.create_note(payload)
-
-
-@router.put("/api/notes/{note_id}", response_model=NoteRecord)
-def update_note(note_id: UUID, payload: NoteUpdate) -> dict:
-    record = repo.update_note(note_id, payload)
-    if not record:
-        raise HTTPException(status_code=404, detail="Note not found")
-    return record
-
-
-@router.delete("/api/notes/{note_id}", status_code=204, response_class=Response)
-def delete_note(note_id: UUID) -> Response:
-    repo.delete_note(note_id)
-    return Response(status_code=204)
 
 
 @router.get("/api/tags", response_model=list[TagRecord])
@@ -344,55 +214,50 @@ def create_tag(payload: TagCreate) -> dict:
     return repo.create_tag(payload)
 
 
-@router.put("/api/tags/{tag_id}", response_model=TagRecord)
-def update_tag(tag_id: UUID, payload: TagUpdate) -> dict:
-    record = repo.update_tag(tag_id, payload)
-    if not record:
-        raise HTTPException(status_code=404, detail="Tag not found")
-    return record
+@router.get("/api/aois", response_model=list[AoiRecord])
+def list_aois() -> list[dict]:
+    return repo.list_aois()
 
 
-@router.delete("/api/tags/{tag_id}", status_code=204, response_class=Response)
-def delete_tag(tag_id: UUID) -> Response:
-    repo.delete_tag(tag_id)
-    return Response(status_code=204)
+@router.post("/api/aois", response_model=AoiRecord)
+def create_aoi(payload: AoiCreate) -> dict:
+    return repo.create_aoi(payload)
 
 
-@router.post("/api/tags/{tag_id}/assignments", response_model=TagAssignment)
-def assign_tag(tag_id: UUID, payload: TagAssignmentCreate) -> dict:
-    return repo.assign_tag(tag_id, payload)
+@router.get("/api/aois/{aoi_id}/events", response_model=list[EventRecord])
+def aoi_events(aoi_id: UUID) -> list[dict]:
+    return repo.events_for_aoi(aoi_id)
 
 
-@router.delete("/api/tags/assignments/{assignment_id}", status_code=204, response_class=Response)
-def unassign_tag(assignment_id: UUID) -> Response:
-    repo.unassign_tag(assignment_id)
-    return Response(status_code=204)
+@router.get("/api/aois/{aoi_id}/passes")
+def aoi_passes(aoi_id: UUID) -> list[dict]:
+    return repo.passes_for_aoi(aoi_id)
 
 
-@router.get("/api/saved-views", response_model=list[SavedViewRecord])
-def list_saved_views() -> list[dict]:
-    return repo.list_saved_views()
+@router.get("/api/satellites/{satellite_id}/fov", response_model=SatelliteFovResponse)
+def satellite_fov(satellite_id: str, at: datetime | None = None) -> dict:
+    row = repo.satellite_fov(satellite_id, at=at)
+    if not row:
+        raise HTTPException(status_code=404, detail="Satellite not found")
+    return row
 
 
-@router.post("/api/saved-views", response_model=SavedViewRecord)
-def create_saved_view(payload: SavedViewCreate) -> dict:
-    return repo.create_saved_view(payload)
-
-
-@router.put("/api/saved-views/{view_id}", response_model=SavedViewRecord)
-def update_saved_view(view_id: UUID, payload: SavedViewUpdate) -> dict:
-    record = repo.update_saved_view(view_id, payload)
-    if not record:
-        raise HTTPException(status_code=404, detail="Saved view not found")
-    return record
-
-
-@router.delete("/api/saved-views/{view_id}", status_code=204, response_class=Response)
-def delete_saved_view(view_id: UUID) -> Response:
-    repo.delete_saved_view(view_id)
-    return Response(status_code=204)
-
-
-@router.get("/api/search", response_model=list[SearchResult])
-def search(q: str = Query(min_length=1)) -> list[dict]:
-    return repo.search(q)
+@router.get("/api/satellites/{satellite_id}/passes", response_model=SatellitePassResponse)
+def satellite_passes(
+    satellite_id: str,
+    lat: float | None = None,
+    lon: float | None = None,
+    aoi_id: UUID | None = None,
+    threshold_km: float = 550.0,
+) -> dict:
+    if aoi_id:
+        aoi_passes = repo.passes_for_aoi(aoi_id)
+        target = next((item for item in aoi_passes if item["satellite_id"] == satellite_id), None)
+        return {"satellite_id": satellite_id, "target": {"aoi_id": str(aoi_id)}, "passes": [] if not target else target["passes"]}
+    if lat is None or lon is None:
+        raise HTTPException(status_code=400, detail="lat/lon or aoi_id is required")
+    return {
+        "satellite_id": satellite_id,
+        "target": {"lat": lat, "lon": lon, "threshold_km": threshold_km},
+        "passes": repo.satellite_passes(satellite_id, target_lat=lat, target_lon=lon, threshold_km=threshold_km),
+    }
