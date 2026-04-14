@@ -9,15 +9,21 @@ from . import repositories as repo
 from .schemas import (
     AoiCreate,
     AoiRecord,
+    AoiUpdate,
     CaseCreate,
     CaseRecord,
+    CaseUpdate,
     EventRecord,
+    EntityTimelineResponse,
     GlobeViewState,
+    InvestigationBundle,
     NoteCreate,
     NoteRecord,
+    NoteUpdate,
     RelationshipRecord,
     SatelliteFovResponse,
     SatellitePassResponse,
+    SourceStatusRecord,
     TagCreate,
     TagRecord,
     TimeState,
@@ -26,6 +32,7 @@ from .schemas import (
     WatchlistCreate,
     WatchlistEntityCreate,
     WatchlistRecord,
+    WatchlistUpdate,
     WorkspaceCreate,
     WorkspaceRecord,
     WorkspaceUpdate,
@@ -151,6 +158,26 @@ def list_relationships(selected_ids: str | None = None, limit: int = Query(defau
     return repo.list_relationships(selected_ids=ids, limit=limit)
 
 
+@router.get("/api/sources/status", response_model=list[SourceStatusRecord])
+def sources_status() -> list[dict]:
+    return repo.list_source_status()
+
+
+@router.get("/api/investigate/{entity_id}", response_model=InvestigationBundle)
+def investigate_entity(entity_id: str) -> dict:
+    return repo.investigation_bundle(entity_id)
+
+
+@router.get("/api/entities/{entity_id}/timeline", response_model=EntityTimelineResponse)
+def get_entity_timeline(
+    entity_id: str,
+    timestamp: datetime | None = None,
+    history_hours: int = Query(default=12, ge=1, le=72),
+    future_minutes: int = Query(default=120, ge=15, le=24 * 60),
+) -> dict:
+    return repo.entity_timeline(entity_id, timestamp=timestamp, history_hours=history_hours, future_minutes=future_minutes)
+
+
 @router.get("/api/cases", response_model=list[CaseRecord])
 def list_cases() -> list[dict]:
     return repo.list_cases()
@@ -159,6 +186,14 @@ def list_cases() -> list[dict]:
 @router.post("/api/cases", response_model=CaseRecord)
 def create_case(payload: CaseCreate) -> dict:
     return repo.create_case(payload)
+
+
+@router.put("/api/cases/{case_id}", response_model=CaseRecord)
+def update_case(case_id: UUID, payload: CaseUpdate) -> dict:
+    row = repo.update_case(case_id, payload)
+    if not row:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return row
 
 
 @router.get("/api/workspaces", response_model=list[WorkspaceRecord])
@@ -189,9 +224,25 @@ def create_watchlist(payload: WatchlistCreate) -> dict:
     return repo.create_watchlist(payload)
 
 
+@router.put("/api/watchlists/{watchlist_id}", response_model=WatchlistRecord)
+def update_watchlist(watchlist_id: UUID, payload: WatchlistUpdate) -> dict:
+    row = repo.update_watchlist(watchlist_id, payload)
+    if not row:
+        raise HTTPException(status_code=404, detail="Watchlist not found")
+    return row
+
+
 @router.post("/api/watchlists/{watchlist_id}/entities", response_model=WatchlistRecord)
 def add_watchlist_entity(watchlist_id: UUID, payload: WatchlistEntityCreate) -> dict:
     return repo.add_watchlist_entity(watchlist_id, payload)
+
+
+@router.delete("/api/watchlists/{watchlist_id}/entities", response_model=WatchlistRecord)
+def remove_watchlist_entity(watchlist_id: UUID, entity_id: str = Query(...)) -> dict:
+    row = repo.remove_watchlist_entity(watchlist_id, entity_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Watchlist not found")
+    return row
 
 
 @router.get("/api/notes", response_model=list[NoteRecord])
@@ -202,6 +253,14 @@ def list_notes(limit: int = Query(default=200, le=500)) -> list[dict]:
 @router.post("/api/notes", response_model=NoteRecord)
 def create_note(payload: NoteCreate) -> dict:
     return repo.create_note(payload)
+
+
+@router.put("/api/notes/{note_id}", response_model=NoteRecord)
+def update_note(note_id: UUID, payload: NoteUpdate) -> dict:
+    row = repo.update_note(note_id, payload)
+    if not row:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return row
 
 
 @router.get("/api/tags", response_model=list[TagRecord])
@@ -222,6 +281,14 @@ def list_aois() -> list[dict]:
 @router.post("/api/aois", response_model=AoiRecord)
 def create_aoi(payload: AoiCreate) -> dict:
     return repo.create_aoi(payload)
+
+
+@router.put("/api/aois/{aoi_id}", response_model=AoiRecord)
+def update_aoi(aoi_id: UUID, payload: AoiUpdate) -> dict:
+    row = repo.update_aoi(aoi_id, payload)
+    if not row:
+        raise HTTPException(status_code=404, detail="AOI not found")
+    return row
 
 
 @router.get("/api/aois/{aoi_id}/events", response_model=list[EventRecord])

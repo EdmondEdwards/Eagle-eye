@@ -1,17 +1,24 @@
 import type {
   AoiRecord,
+  AoiUpdate,
   CaseRecord,
+  CaseUpdate,
+  EntityTimelineResponse,
   EventRecord,
   GlobeViewState,
+  InvestigationBundle,
   LiveEnvelope,
   NoteRecord,
+  NoteUpdate,
   RelationshipRecord,
   SatelliteFovResponse,
   SatellitePassResponse,
+  SourceStatusRecord,
   TagRecord,
   TimeState,
   ViewQueryResponse,
   WatchlistRecord,
+  WatchlistUpdate,
   WorkspaceRecord
 } from "@eagle-eye/shared-types";
 
@@ -49,9 +56,17 @@ export const api = {
     requestJson<RelationshipRecord[]>(
       `/api/relationships${selectedIds?.length ? `?selected_ids=${encodeURIComponent(selectedIds.join(","))}` : ""}`
     ),
+  getSourceStatus: () => requestJson<SourceStatusRecord[]>("/api/sources/status"),
+  investigateEntity: (entityId: string) => requestJson<InvestigationBundle>(`/api/investigate/${encodeURIComponent(entityId)}`),
+  getEntityTimeline: (entityId: string, params?: URLSearchParams) =>
+    requestJson<EntityTimelineResponse>(
+      `/api/entities/${encodeURIComponent(entityId)}/timeline${params ? `?${params.toString()}` : ""}`
+    ),
   getCases: () => requestJson<CaseRecord[]>("/api/cases"),
   createCase: (payload: Partial<CaseRecord>) =>
     requestJson<CaseRecord>("/api/cases", { method: "POST", body: JSON.stringify(payload) }),
+  updateCase: (caseId: string, payload: CaseUpdate) =>
+    requestJson<CaseRecord>(`/api/cases/${caseId}`, { method: "PUT", body: JSON.stringify(payload) }),
   getWorkspaces: () => requestJson<WorkspaceRecord[]>("/api/workspaces"),
   createWorkspace: (payload: Partial<WorkspaceRecord>) =>
     requestJson<WorkspaceRecord>("/api/workspaces", { method: "POST", body: JSON.stringify(payload) }),
@@ -60,20 +75,31 @@ export const api = {
   getWatchlists: () => requestJson<WatchlistRecord[]>("/api/watchlists"),
   createWatchlist: (payload: Partial<WatchlistRecord>) =>
     requestJson<WatchlistRecord>("/api/watchlists", { method: "POST", body: JSON.stringify(payload) }),
+  updateWatchlist: (watchlistId: string, payload: WatchlistUpdate) =>
+    requestJson<WatchlistRecord>(`/api/watchlists/${watchlistId}`, { method: "PUT", body: JSON.stringify(payload) }),
   addWatchlistEntity: (watchlistId: string, payload: Record<string, unknown>) =>
     requestJson<WatchlistRecord>(`/api/watchlists/${watchlistId}/entities`, {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  removeWatchlistEntity: (watchlistId: string, entityId: string) =>
+    requestJson<WatchlistRecord>(
+      `/api/watchlists/${watchlistId}/entities?entity_id=${encodeURIComponent(entityId)}`,
+      { method: "DELETE" }
+    ),
   getNotes: () => requestJson<NoteRecord[]>("/api/notes"),
   createNote: (payload: Partial<NoteRecord>) =>
     requestJson<NoteRecord>("/api/notes", { method: "POST", body: JSON.stringify(payload) }),
+  updateNote: (noteId: string, payload: NoteUpdate) =>
+    requestJson<NoteRecord>(`/api/notes/${noteId}`, { method: "PUT", body: JSON.stringify(payload) }),
   getTags: () => requestJson<TagRecord[]>("/api/tags"),
   createTag: (payload: Partial<TagRecord>) =>
     requestJson<TagRecord>("/api/tags", { method: "POST", body: JSON.stringify(payload) }),
   getAois: () => requestJson<AoiRecord[]>("/api/aois"),
   createAoi: (payload: Record<string, unknown>) =>
     requestJson<AoiRecord>("/api/aois", { method: "POST", body: JSON.stringify(payload) }),
+  updateAoi: (aoiId: string, payload: AoiUpdate) =>
+    requestJson<AoiRecord>(`/api/aois/${aoiId}`, { method: "PUT", body: JSON.stringify(payload) }),
   getAoiEvents: (aoiId: string) => requestJson<EventRecord[]>(`/api/aois/${aoiId}/events`),
   getAoiPasses: (aoiId: string) => requestJson<Array<Record<string, unknown>>>(`/api/aois/${aoiId}/passes`),
   getSatelliteFov: (satelliteId: string) => requestJson<SatelliteFovResponse>(`/api/satellites/${satelliteId}/fov`),

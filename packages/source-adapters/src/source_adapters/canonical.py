@@ -268,11 +268,28 @@ class WebcamCatalogEntry:
     id: str
     name: str
     provider: str
+    provider_camera_id: str | None
+    country: str
+    region: str
+    city: str
     lat: float
     lon: float
-    status: str = "planned"
-    source: str = "webcam_catalog_placeholder"
+    category: str
+    subcategory: str
+    watch_url: str
+    embed_url: str | None
+    preview_image_url: str | None
+    access_mode: Literal["embed", "preview_only", "link_only"]
+    embed_allowed: bool
+    source_confidence: float
+    tags: list[str] = field(default_factory=list)
+    priority: int = 2
+    metadata: dict[str, Any] = field(default_factory=dict)
+    source: str = "approved_webcam_seed"
     observed_at: datetime = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _serialize(asdict(self), "observed_at")
 
 
 @dataclass(slots=True)

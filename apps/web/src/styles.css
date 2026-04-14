@@ -157,6 +157,43 @@ select {
   padding: 18px 22px;
 }
 
+.timeline-left {
+  flex: 1 1 auto;
+  align-items: flex-start;
+}
+
+.timeline-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.timeline-stat {
+  min-width: 88px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.timeline-stat.wide {
+  min-width: 320px;
+}
+
+.timeline-stat span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.timeline-stat strong {
+  display: block;
+  margin-top: 6px;
+}
+
 h1,
 h2,
 h3 {
@@ -202,6 +239,19 @@ h3 {
   margin-top: 12px;
 }
 
+.preset-row,
+.tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tab-active {
+  background: rgba(255, 213, 74, 0.16);
+  border-color: rgba(255, 213, 74, 0.35);
+}
+
 .layer-chip,
 .list-row,
 button,
@@ -245,6 +295,10 @@ button {
   flex-direction: column;
   gap: 8px;
   margin-top: 10px;
+}
+
+.stack-list.compact {
+  margin-top: 12px;
 }
 
 .list-row {
@@ -295,6 +349,42 @@ button {
   border: 1px solid rgba(154, 246, 176, 0.2);
 }
 
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.info-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(110, 231, 255, 0.08);
+  border: 1px solid rgba(110, 231, 255, 0.18);
+  color: #d8fbff;
+  font-size: 12px;
+}
+
+.note-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.note-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .mini-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -311,6 +401,33 @@ button {
   display: block;
   margin-top: 6px;
   font-size: 24px;
+}
+
+.timeline-card {
+  min-width: 220px;
+}
+
+.trace-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.trace-dot {
+  width: 10px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.trace-dot.history {
+  background: linear-gradient(180deg, rgba(110, 231, 255, 0.8), rgba(110, 231, 255, 0.28));
+}
+
+.trace-dot.future {
+  background: linear-gradient(180deg, rgba(255, 213, 74, 0.85), rgba(255, 213, 74, 0.3));
+  border: 1px dashed rgba(255, 213, 74, 0.45);
 }
 
 @media (max-width: 1280px) {

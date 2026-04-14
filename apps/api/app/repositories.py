@@ -16,13 +16,19 @@ from eagle_eye_simulation import (
 from .db import as_json, execute, execute_many, fetch_all, fetch_one
 from .schemas import (
     AoiCreate,
+    AoiUpdate,
     CaseCreate,
+    CaseUpdate,
+    EntityTimelineResponse,
     GlobeViewState,
+    InvestigationBundle,
     NoteCreate,
+    NoteUpdate,
     TagCreate,
     TimeStateUpdate,
     WatchlistCreate,
     WatchlistEntityCreate,
+    WatchlistUpdate,
     WorkspaceCreate,
     WorkspaceUpdate,
 )
@@ -439,6 +445,39 @@ def create_aoi(payload: AoiCreate) -> dict[str, Any]:
     return list_aois(limit=1)[0]
 
 
+def update_aoi(aoi_id: UUID, payload: AoiUpdate) -> dict[str, Any] | None:
+    current = fetch_one(
+        """
+        SELECT id, name, description, geometry_type, radius_m, tags
+        FROM aois
+        WHERE id = :aoi_id
+        """,
+        {"aoi_id": aoi_id},
+    )
+    if not current:
+        return None
+    merged = {**current, **payload.model_dump(exclude_none=True)}
+    execute(
+        """
+        UPDATE aois
+        SET name = :name,
+            description = :description,
+            radius_m = :radius_m,
+            tags = :tags,
+            updated_at = NOW()
+        WHERE id = :aoi_id
+        """,
+        {
+            "aoi_id": aoi_id,
+            "name": merged["name"],
+            "description": merged.get("description"),
+            "radius_m": merged.get("radius_m"),
+            "tags": merged.get("tags") or [],
+        },
+    )
+    return next((row for row in list_aois() if str(row["id"]) == str(aoi_id)), None)
+
+
 def events_for_aoi(aoi_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
     return fetch_all(
         """
@@ -716,6 +755,42 @@ def create_case(payload: CaseCreate) -> dict[str, Any]:
     return list_cases()[0]
 
 
+def update_case(case_id: UUID, payload: CaseUpdate) -> dict[str, Any] | None:
+    current = fetch_one(
+        """
+        SELECT id, title, summary, status, priority, source, created_at, updated_at
+        FROM cases
+        WHERE id = :case_id
+        """,
+        {"case_id": case_id},
+    )
+    if not current:
+        return None
+    merged = {**current, **payload.model_dump(exclude_none=True, exclude={"entities"})}
+    execute(
+        """
+        UPDATE cases
+        SET title = :title,
+            summary = :summary,
+            status = :status,
+            priority = :priority,
+            updated_at = NOW()
+        WHERE id = :case_id
+        """,
+        {"case_id": case_id, **merged},
+    )
+    if payload.entities is not None:
+        execute("DELETE FROM case_entities WHERE case_id = :case_id", {"case_id": case_id})
+        execute_many(
+            """
+            INSERT INTO case_entities (case_id, entity_kind, entity_id, role)
+            VALUES (:case_id, :entity_kind, :entity_id, :role)
+            """,
+            [{"case_id": case_id, **entity.model_dump()} for entity in payload.entities],
+        )
+    return next((row for row in list_cases() if str(row["id"]) == str(case_id)), None)
+
+
 def list_notes(limit: int = 200) -> list[dict[str, Any]]:
     return fetch_all(
         """
@@ -737,6 +812,38 @@ def create_note(payload: NoteCreate) -> dict[str, Any]:
         payload.model_dump(),
     )
     return list_notes(limit=1)[0]
+
+
+def update_note(note_id: UUID, payload: NoteUpdate) -> dict[str, Any] | None:
+    current = fetch_one(
+        """
+        SELECT id, case_id, entity_kind, entity_id, body, author, source, created_at, updated_at
+        FROM notes
+        WHERE id = :note_id
+        """,
+        {"note_id": note_id},
+    )
+    if not current:
+        return None
+    merged = {**current, **payload.model_dump(exclude_none=True)}
+    execute(
+        """
+        UPDATE notes
+        SET case_id = :case_id,
+            body = :body,
+            updated_at = NOW()
+        WHERE id = :note_id
+        """,
+        {"note_id": note_id, "case_id": merged.get("case_id"), "body": merged["body"]},
+    )
+    return fetch_one(
+        """
+        SELECT id, case_id, entity_kind, entity_id, body, author, source, created_at, updated_at
+        FROM notes
+        WHERE id = :note_id
+        """,
+        {"note_id": note_id},
+    )
 
 
 def list_watchlists() -> list[dict[str, Any]]:
@@ -771,6 +878,32 @@ def create_watchlist(payload: WatchlistCreate) -> dict[str, Any]:
     return list_watchlists()[0]
 
 
+def update_watchlist(watchlist_id: UUID, payload: WatchlistUpdate) -> dict[str, Any] | None:
+    current = fetch_one(
+        """
+        SELECT id, name, description, color, source, created_at, updated_at
+        FROM watchlists
+        WHERE id = :watchlist_id
+        """,
+        {"watchlist_id": watchlist_id},
+    )
+    if not current:
+        return None
+    merged = {**current, **payload.model_dump(exclude_none=True)}
+    execute(
+        """
+        UPDATE watchlists
+        SET name = :name,
+            description = :description,
+            color = :color,
+            updated_at = NOW()
+        WHERE id = :watchlist_id
+        """,
+        {"watchlist_id": watchlist_id, **merged},
+    )
+    return next((row for row in list_watchlists() if str(row["id"]) == str(watchlist_id)), None)
+
+
 def add_watchlist_entity(watchlist_id: UUID, payload: WatchlistEntityCreate) -> dict[str, Any]:
     execute(
         """
@@ -780,6 +913,18 @@ def add_watchlist_entity(watchlist_id: UUID, payload: WatchlistEntityCreate) -> 
         {"watchlist_id": watchlist_id, **payload.model_dump()},
     )
     return next(row for row in list_watchlists() if str(row["id"]) == str(watchlist_id))
+
+
+def remove_watchlist_entity(watchlist_id: UUID, entity_id: str) -> dict[str, Any] | None:
+    execute(
+        """
+        DELETE FROM watchlist_entities
+        WHERE watchlist_id = :watchlist_id
+          AND entity_id = :entity_id
+        """,
+        {"watchlist_id": watchlist_id, "entity_id": entity_id},
+    )
+    return next((row for row in list_watchlists() if str(row["id"]) == str(watchlist_id)), None)
 
 
 def list_tags() -> list[dict[str, Any]]:
@@ -878,3 +1023,374 @@ def update_workspace(workspace_id: UUID, payload: WorkspaceUpdate) -> dict[str, 
         """,
         {"workspace_id": workspace_id},
     )
+
+
+def entity_timeline(entity_id: str, *, timestamp: datetime | None = None, history_hours: int = 12, future_minutes: int = 120) -> dict[str, Any]:
+    reference = _utc(timestamp)
+    history_start = reference - timedelta(hours=history_hours)
+    entity_kind = "unknown"
+    history: list[dict[str, Any]] = []
+    predicted: list[dict[str, Any]] = []
+
+    aircraft = fetch_all(
+        """
+        SELECT ST_Y(geom) AS lat, ST_X(geom) AS lon, altitude_m, observed_at
+        FROM aircraft_history
+        WHERE entity_id = :entity_id
+          AND observed_at BETWEEN :history_start AND :reference
+        ORDER BY observed_at ASC
+        LIMIT 500
+        """,
+        {"entity_id": entity_id, "history_start": history_start, "reference": reference},
+    )
+    if aircraft:
+        entity_kind = "aircraft"
+        history = aircraft
+        current = fetch_one(
+            """
+            SELECT ST_Y(geom) AS lat, ST_X(geom) AS lon, altitude_m, heading_deg, velocity_kts, observed_at
+            FROM aircraft_current
+            WHERE id = :entity_id
+            """,
+            {"entity_id": entity_id},
+        )
+        if current:
+            predicted = predict_aircraft_track(
+                lat=current["lat"],
+                lon=current["lon"],
+                heading_deg=current.get("heading_deg"),
+                speed_kts=current.get("velocity_kts"),
+                observed_at=current.get("observed_at"),
+                minutes_ahead=future_minutes,
+                step_seconds=120,
+                altitude_m=current.get("altitude_m"),
+            )
+
+    if not history:
+        vessels = fetch_all(
+            """
+            SELECT ST_Y(geom) AS lat, ST_X(geom) AS lon, 0::double precision AS altitude_m, observed_at
+            FROM vessels_history
+            WHERE entity_id = :entity_id
+              AND observed_at BETWEEN :history_start AND :reference
+            ORDER BY observed_at ASC
+            LIMIT 500
+            """,
+            {"entity_id": entity_id, "history_start": history_start, "reference": reference},
+        )
+        if vessels:
+            entity_kind = "vessel"
+            history = vessels
+            current = fetch_one(
+                """
+                SELECT ST_Y(geom) AS lat, ST_X(geom) AS lon, course_deg, heading_deg, speed_kts, observed_at
+                FROM vessels_current
+                WHERE id = :entity_id
+                """,
+                {"entity_id": entity_id},
+            )
+            if current:
+                predicted = predict_vessel_track(
+                    lat=current["lat"],
+                    lon=current["lon"],
+                    heading_deg=current.get("course_deg") or current.get("heading_deg"),
+                    speed_kts=current.get("speed_kts"),
+                    observed_at=current.get("observed_at"),
+                    minutes_ahead=future_minutes,
+                    step_seconds=300,
+                    altitude_m=0,
+                )
+
+    if not history:
+        satellites = fetch_all(
+            """
+            SELECT computed_lat AS lat, computed_lon AS lon, computed_alt_km * 1000.0 AS altitude_m, observed_at
+            FROM satellites_history
+            WHERE (entity_id = :entity_id OR norad_cat_id = REPLACE(:entity_id, 'satellite:', ''))
+              AND observed_at BETWEEN :history_start AND :reference
+            ORDER BY observed_at ASC
+            LIMIT 500
+            """,
+            {"entity_id": entity_id, "history_start": history_start, "reference": reference},
+        )
+        if satellites:
+            entity_kind = "satellite"
+            history = satellites
+            current = fetch_one(
+                """
+                SELECT computed_lat AS lat, computed_lon AS lon, computed_alt_km * 1000.0 AS altitude_m, observed_at
+                FROM satellites_current
+                WHERE id = :entity_id OR norad_cat_id = REPLACE(:entity_id, 'satellite:', '')
+                ORDER BY observed_at DESC
+                LIMIT 1
+                """,
+                {"entity_id": entity_id},
+            )
+            if current:
+                predicted = _prediction(
+                    {
+                        "lat": current["lat"],
+                        "lon": current["lon"],
+                        "altitude_m": current.get("altitude_m"),
+                        "observed_at": current.get("observed_at"),
+                    },
+                    "satellite",
+                )
+
+    return {
+        "entity_id": entity_id,
+        "entity_kind": entity_kind,
+        "history": history,
+        "predicted": predicted,
+        "window": {"from": history_start, "to": reference + timedelta(minutes=future_minutes)},
+    }
+
+
+def list_source_status() -> list[dict[str, Any]]:
+    aircraft = fetch_one(
+        """
+        SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
+        FROM aircraft_current
+        """
+    ) or {}
+    vessels = fetch_all(
+        """
+        SELECT provider_name, health_state, last_success, valid_message_count, error_count
+        FROM vessel_source_health
+        ORDER BY priority DESC, provider_name ASC
+        """
+    )
+    satellites = fetch_one(
+        """
+        SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
+        FROM satellites_current
+        """
+    ) or {}
+    airspace = fetch_one(
+        """
+        SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
+        FROM airspace_overlays
+        """
+    ) or {}
+    events = fetch_one(
+        """
+        SELECT MAX(detected_at) AS last_observed_at, COUNT(*)::int AS item_count
+        FROM events
+        WHERE detected_at > NOW() - interval '24 hours'
+        """
+    ) or {}
+    rows = [
+        {
+            "key": "opensky",
+            "label": "OpenSky",
+            "domain": "air",
+            "status": "healthy" if aircraft.get("item_count", 0) > 0 else "idle",
+            "last_observed_at": aircraft.get("last_observed_at"),
+            "item_count": aircraft.get("item_count", 0),
+            "details": {"table": "aircraft_current"},
+        },
+        {
+            "key": "celestrak",
+            "label": "CelesTrak",
+            "domain": "space",
+            "status": "healthy" if satellites.get("item_count", 0) > 0 else "idle",
+            "last_observed_at": satellites.get("last_observed_at"),
+            "item_count": satellites.get("item_count", 0),
+            "details": {"table": "satellites_current"},
+        },
+        {
+            "key": "faa_tfr",
+            "label": "FAA TFR",
+            "domain": "airspace",
+            "status": "healthy" if airspace.get("item_count", 0) > 0 else "idle",
+            "last_observed_at": airspace.get("last_observed_at"),
+            "item_count": airspace.get("item_count", 0),
+            "details": {"table": "airspace_overlays"},
+        },
+        {
+            "key": "events",
+            "label": "Event Engine",
+            "domain": "analytics",
+            "status": "healthy",
+            "last_observed_at": events.get("last_observed_at"),
+            "item_count": events.get("item_count", 0),
+            "details": {"window": "24h"},
+        },
+    ]
+    for vessel in vessels:
+        rows.append(
+            {
+                "key": f"maritime:{vessel['provider_name']}",
+                "label": vessel["provider_name"],
+                "domain": "maritime",
+                "status": vessel["health_state"],
+                "last_observed_at": vessel.get("last_success"),
+                "item_count": vessel.get("valid_message_count", 0),
+                "details": {"errors": vessel.get("error_count", 0)},
+            }
+        )
+    return rows
+
+
+def investigation_bundle(entity_id: str) -> dict[str, Any]:
+    entity = next(
+        (
+            row
+            for row in fetch_all(
+                """
+                SELECT id, 'aircraft' AS entity_kind, COALESCE(callsign, icao24, id) AS label,
+                       json_build_object('type', 'Point', 'coordinates', json_build_array(ST_X(geom), ST_Y(geom))) AS geometry,
+                       observed_at,
+                       jsonb_build_object(
+                         'icao24', icao24,
+                         'callsign', callsign,
+                         'altitude_m', altitude_m,
+                         'heading_deg', heading_deg,
+                         'velocity_kts', velocity_kts
+                       ) AS properties
+                FROM aircraft_current
+                WHERE id = :entity_id
+                UNION ALL
+                SELECT id, 'vessel' AS entity_kind, COALESCE(vessel_name, callsign, mmsi, id) AS label,
+                       json_build_object('type', 'Point', 'coordinates', json_build_array(ST_X(geom), ST_Y(geom))) AS geometry,
+                       observed_at,
+                       jsonb_build_object(
+                         'mmsi', mmsi,
+                         'vessel_name', vessel_name,
+                         'course_deg', course_deg,
+                         'speed_kts', speed_kts
+                       ) AS properties
+                FROM vessels_current
+                WHERE id = :entity_id
+                UNION ALL
+                SELECT id, 'satellite' AS entity_kind, name AS label,
+                       json_build_object('type', 'Point', 'coordinates', json_build_array(computed_lon, computed_lat)) AS geometry,
+                       observed_at,
+                       jsonb_build_object(
+                         'norad_cat_id', norad_cat_id,
+                         'name', name,
+                         'computed_alt_km', computed_alt_km
+                       ) AS properties
+                FROM satellites_current
+                WHERE id = :entity_id OR norad_cat_id = REPLACE(:entity_id, 'satellite:', '')
+                UNION ALL
+                SELECT id::text AS id, 'aoi' AS entity_kind, name AS label,
+                       ST_AsGeoJSON(geom)::json AS geometry,
+                       observed_at,
+                       jsonb_build_object(
+                         'geometry_type', geometry_type,
+                         'radius_m', radius_m
+                       ) AS properties
+                FROM aois
+                WHERE id::text = :entity_id
+                """,
+                {"entity_id": entity_id},
+            )
+        ),
+        None,
+    )
+    if not entity:
+        return {
+            "entity": None,
+            "events": [],
+            "relationships": [],
+            "notes": [],
+            "aois": [],
+            "watchlists": [],
+            "satellite_fov": None,
+            "satellite_passes": [],
+            "timeline": None,
+            "aoi_events": [],
+            "aoi_passes": [],
+        }
+    events = list_events(entity_id=entity_id, limit=50)
+    relationships = list_relationships(selected_ids=[entity_id], limit=50)
+    notes = fetch_all(
+        """
+        SELECT id, case_id, entity_kind, entity_id, body, author, source, created_at, updated_at
+        FROM notes
+        WHERE entity_id = :entity_id
+        ORDER BY updated_at DESC
+        LIMIT 50
+        """,
+        {"entity_id": entity_id},
+    )
+    watchlists = fetch_all(
+        """
+        SELECT w.id, w.name, w.description, w.color, w.source, w.created_at, w.updated_at
+        FROM watchlists w
+        JOIN watchlist_entities we ON we.watchlist_id = w.id
+        WHERE we.entity_id = :entity_id
+        ORDER BY w.updated_at DESC
+        """,
+        {"entity_id": entity_id},
+    )
+    if entity["entity_kind"] == "aoi":
+        aois = [row for row in list_aois() if str(row["id"]) == str(entity_id)]
+    else:
+        point = entity["geometry"]
+        aois = fetch_all(
+            """
+            SELECT
+              id,
+              name,
+              description,
+              geometry_type,
+              ST_AsGeoJSON(geom)::json AS geometry,
+              CASE WHEN center_geom IS NULL THEN NULL ELSE ST_AsGeoJSON(center_geom)::json END AS center,
+              radius_m,
+              tags,
+              source,
+              source_confidence,
+              observed_at,
+              updated_at
+            FROM aois
+            WHERE ST_Intersects(
+              geom,
+              ST_SetSRID(ST_GeomFromGeoJSON(:entity_geometry), 4326)
+            )
+               OR ST_DWithin(
+                 COALESCE(center_geom, ST_Centroid(geom))::geography,
+                 ST_SetSRID(ST_GeomFromGeoJSON(:entity_geometry), 4326)::geography,
+                 GREATEST(COALESCE(radius_m, 150000.0), 150000.0)
+               )
+            ORDER BY updated_at DESC
+            LIMIT 20
+            """,
+            {"entity_geometry": as_json(pointFromGeometry)},
+        )
+    satellite_fov_row = satellite_fov(entity_id) if entity["entity_kind"] == "satellite" else None
+    satellite_passes_rows = []
+    timeline = entity_timeline(entity_id)
+    aoi_events_rows: list[dict[str, Any]] = []
+    aoi_passes_rows: list[dict[str, Any]] = []
+    if entity["entity_kind"] == "satellite":
+        for aoi in aois[:3]:
+            satellite_passes_rows.extend(
+                [
+                    {
+                        "aoi_id": aoi["id"],
+                        "aoi_name": aoi["name"],
+                        "passes": item["passes"],
+                    }
+                    for item in passes_for_aoi(UUID(str(aoi["id"])))
+                    if item["satellite_id"] in {entity_id, entity["properties"].get("norad_cat_id"), entity["id"]}
+                ]
+            )
+    if entity["entity_kind"] == "aoi":
+        aoi_uuid = UUID(str(entity_id))
+        aoi_events_rows = events_for_aoi(aoi_uuid, limit=100)
+        aoi_passes_rows = passes_for_aoi(aoi_uuid, limit=20)
+    return {
+        "entity": entity,
+        "events": events,
+        "relationships": relationships,
+        "notes": notes,
+        "aois": aois,
+        "watchlists": [{**watchlist, "entities": []} for watchlist in watchlists],
+        "satellite_fov": satellite_fov_row,
+        "satellite_passes": satellite_passes_rows,
+        "timeline": timeline,
+        "aoi_events": aoi_events_rows,
+        "aoi_passes": aoi_passes_rows,
+    }

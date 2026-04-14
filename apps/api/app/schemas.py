@@ -206,6 +206,14 @@ class CaseCreate(BaseModel):
     entities: list[CaseEntity] = Field(default_factory=list)
 
 
+class CaseUpdate(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    entities: list[CaseEntity] | None = None
+
+
 class NoteRecord(BaseModel):
     id: UUID
     case_id: UUID | None = None
@@ -225,6 +233,11 @@ class NoteCreate(BaseModel):
     body: str
     author: str = "local-analyst"
     source: str = "user"
+
+
+class NoteUpdate(BaseModel):
+    body: str | None = None
+    case_id: UUID | None = None
 
 
 class WatchlistEntityRecord(BaseModel):
@@ -253,6 +266,12 @@ class WatchlistCreate(BaseModel):
     source: str = "user"
 
 
+class WatchlistUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    color: str | None = None
+
+
 class WatchlistEntityCreate(BaseModel):
     entity_kind: str
     entity_id: str
@@ -274,6 +293,13 @@ class TagCreate(BaseModel):
     source: str = "user"
 
 
+class AoiUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    radius_m: float | None = None
+    tags: list[str] | None = None
+
+
 class SatelliteFovResponse(BaseModel):
     satellite_id: str
     timestamp: datetime
@@ -286,3 +312,43 @@ class SatellitePassResponse(BaseModel):
     satellite_id: str
     target: dict[str, Any]
     passes: list[dict[str, Any]]
+
+
+class TimelinePoint(BaseModel):
+    lat: float
+    lon: float
+    observed_at: datetime
+    altitude_m: float | None = None
+    confidence: float | None = None
+
+
+class EntityTimelineResponse(BaseModel):
+    entity_id: str
+    entity_kind: str
+    history: list[TimelinePoint] = Field(default_factory=list)
+    predicted: list[TimelinePoint] = Field(default_factory=list)
+    window: dict[str, datetime]
+
+
+class SourceStatusRecord(BaseModel):
+    key: str
+    label: str
+    domain: str
+    status: str
+    last_observed_at: datetime | None = None
+    item_count: int = 0
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class InvestigationBundle(BaseModel):
+    entity: EntityRecord | None = None
+    events: list[EventRecord] = Field(default_factory=list)
+    relationships: list[RelationshipRecord] = Field(default_factory=list)
+    notes: list[NoteRecord] = Field(default_factory=list)
+    aois: list[AoiRecord] = Field(default_factory=list)
+    watchlists: list[WatchlistRecord] = Field(default_factory=list)
+    satellite_fov: SatelliteFovResponse | None = None
+    satellite_passes: list[dict[str, Any]] = Field(default_factory=list)
+    timeline: EntityTimelineResponse | None = None
+    aoi_events: list[EventRecord] = Field(default_factory=list)
+    aoi_passes: list[dict[str, Any]] = Field(default_factory=list)

@@ -141,6 +141,14 @@ export interface TimelinePoint {
   confidence?: number | null;
 }
 
+export interface EntityTimelineResponse {
+  entity_id: string;
+  entity_kind: string;
+  history: TimelinePoint[];
+  predicted: TimelinePoint[];
+  window: Record<string, string>;
+}
+
 export interface AoiRecord {
   id: string;
   name: string;
@@ -219,6 +227,31 @@ export interface WatchlistRecord {
   entities: WatchlistEntityRecord[];
 }
 
+export interface CaseUpdate {
+  title?: string | null;
+  summary?: string | null;
+  status?: string | null;
+  priority?: string | null;
+}
+
+export interface NoteUpdate {
+  body?: string | null;
+  case_id?: string | null;
+}
+
+export interface WatchlistUpdate {
+  name?: string | null;
+  description?: string | null;
+  color?: string | null;
+}
+
+export interface AoiUpdate {
+  name?: string | null;
+  description?: string | null;
+  radius_m?: number | null;
+  tags?: string[];
+}
+
 export interface TagRecord {
   id: string;
   name: string;
@@ -246,4 +279,28 @@ export interface LiveEnvelope {
   topic: string;
   action: string;
   payload: Record<string, unknown>;
+}
+
+export interface SourceStatusRecord {
+  key: string;
+  label: string;
+  domain: string;
+  status: string;
+  last_observed_at?: string | null;
+  item_count: number;
+  details: Record<string, unknown>;
+}
+
+export interface InvestigationBundle {
+  entity?: EntityRecord | null;
+  events: EventRecord[];
+  relationships: RelationshipRecord[];
+  notes: NoteRecord[];
+  aois: AoiRecord[];
+  watchlists: WatchlistRecord[];
+  satellite_fov?: SatelliteFovResponse | null;
+  satellite_passes: Array<Record<string, unknown>>;
+  timeline?: EntityTimelineResponse | null;
+  aoi_events: EventRecord[];
+  aoi_passes: Array<Record<string, unknown>>;
 }

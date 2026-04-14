@@ -6,6 +6,7 @@ import logging
 import math
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urljoin
 
@@ -251,12 +252,37 @@ class FAAAirspaceAdapter:
 
 class WebcamCatalogAdapter:
     def catalog(self) -> list[WebcamCatalogEntry]:
-        return [
-            WebcamCatalogEntry(
-                id="webcam:placeholder:1",
-                name="Webcam ingest planned for v1.5",
-                provider="placeholder",
-                lat=64.2008,
-                lon=-149.4937,
+        seed_path = Path(__file__).resolve().parents[4] / "data" / "webcams" / "approved_webcams_seed.json"
+        if not seed_path.exists():
+            LOGGER.warning("Approved webcam seed not found at %s", seed_path)
+            return []
+
+        payload = json.loads(seed_path.read_text(encoding="utf-8"))
+        entries = payload.get("entries", payload if isinstance(payload, list) else [])
+        catalog: list[WebcamCatalogEntry] = []
+        for entry in entries:
+            catalog.append(
+                WebcamCatalogEntry(
+                    id=entry["id"],
+                    name=entry["name"],
+                    provider=entry["provider"],
+                    provider_camera_id=entry.get("provider_camera_id"),
+                    country=entry["country"],
+                    region=entry["region"],
+                    city=entry["city"],
+                    lat=float(entry["lat"]),
+                    lon=float(entry["lon"]),
+                    category=entry["category"],
+                    subcategory=entry["subcategory"],
+                    watch_url=entry["watch_url"],
+                    embed_url=entry.get("embed_url"),
+                    preview_image_url=entry.get("preview_image_url"),
+                    access_mode=entry["access_mode"],
+                    embed_allowed=bool(entry["embed_allowed"]),
+                    source_confidence=float(entry["source_confidence"]),
+                    tags=list(entry.get("tags", [])),
+                    priority=int(entry.get("priority", 2)),
+                    metadata=dict(entry.get("metadata", {})),
+                )
             )
-        ]
+        return catalog
