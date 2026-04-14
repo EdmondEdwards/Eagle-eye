@@ -45,6 +45,22 @@ def _utc(value: datetime | None = None) -> datetime:
 def get_time_state() -> dict[str, Any]:
     execute(
         """
+        CREATE TABLE IF NOT EXISTS time_state (
+          singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+          mode TEXT NOT NULL DEFAULT 'live',
+          status TEXT NOT NULL DEFAULT 'playing',
+          current_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          playback_speed DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+          step_seconds INTEGER NOT NULL DEFAULT 60,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK (singleton = TRUE),
+          CHECK (mode IN ('live', 'paused', 'replay', 'simulate')),
+          CHECK (status IN ('playing', 'paused'))
+        )
+        """
+    )
+    execute(
+        """
         INSERT INTO time_state (singleton, mode, status, current_timestamp, playback_speed, step_seconds, updated_at)
         VALUES (TRUE, 'live', 'playing', NOW(), 1.0, 60, NOW())
         ON CONFLICT (singleton) DO NOTHING
