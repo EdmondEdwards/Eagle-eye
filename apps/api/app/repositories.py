@@ -43,6 +43,13 @@ def _utc(value: datetime | None = None) -> datetime:
 
 
 def get_time_state() -> dict[str, Any]:
+    execute(
+        """
+        INSERT INTO time_state (singleton, mode, status, current_timestamp, playback_speed, step_seconds, updated_at)
+        VALUES (TRUE, 'live', 'playing', NOW(), 1.0, 60, NOW())
+        ON CONFLICT (singleton) DO NOTHING
+        """
+    )
     record = fetch_one(
         """
         SELECT mode, status, current_timestamp, playback_speed, step_seconds, updated_at

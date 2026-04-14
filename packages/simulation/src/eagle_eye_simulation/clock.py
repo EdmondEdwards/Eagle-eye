@@ -4,9 +4,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-def _utc(dt: datetime | None) -> datetime:
+def _utc(dt: datetime | str | None) -> datetime:
     if dt is None:
         return datetime.now(timezone.utc)
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.now(timezone.utc)
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
