@@ -38,7 +38,7 @@ import type {
 import { detailTabs, layerDefinitions } from "@eagle-eye/ui";
 import { api, connectLiveFeed } from "./lib/api";
 import { aircraftColorForAircraft, aircraftIconForAircraft, resolveAircraftCategory } from "./lib/aircraftIconMap";
-import satelliteImage from "./assets/sat.png";
+import satelliteImage from "./assets/sat_processed.png";
 
 type SelectedEntity =
   | ({ kind: "aircraft" } & Aircraft)
@@ -983,8 +983,8 @@ export default function App() {
             image: satelliteImage,
             verticalOrigin: VerticalOrigin.CENTER,
             alignedAxis: Cartesian3.UNIT_Z,
-            scale: isSelected ? 0.76 : 0.62,
-            scaleByDistance: new NearFarScalar(150_000, isSelected ? 0.18 : 0.12, 22_000_000, isSelected ? 1.16 : 0.96),
+            scale: isSelected ? 0.42 : 0.34,
+            scaleByDistance: new NearFarScalar(180_000, isSelected ? 1.32 : 1.08, 22_000_000, isSelected ? 0.26 : 0.18),
             color: Color.fromCssColorString(isSelected ? SATELLITE_SELECTED_COLOR : SATELLITE_COLOR),
             disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
