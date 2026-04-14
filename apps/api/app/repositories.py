@@ -42,6 +42,11 @@ def _utc(value: datetime | None = None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _table_exists(table_name: str) -> bool:
+    row = fetch_one("SELECT to_regclass(:table_name) AS relation_name", {"table_name": f"public.{table_name}"})
+    return bool(row and row.get("relation_name"))
+
+
 def get_time_state() -> dict[str, Any]:
     execute(
         """
@@ -330,6 +335,8 @@ def _query_domain(table: str, entity_kind: str, timestamp: datetime, view: Globe
 
 
 def list_events(*, view: GlobeViewState | None = None, entity_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    if not _table_exists("events"):
+        return []
     clauses = []
     params: dict[str, Any] = {"limit": limit}
     if view is not None:
@@ -374,6 +381,8 @@ def list_events(*, view: GlobeViewState | None = None, entity_id: str | None = N
 
 
 def list_relationships(*, selected_ids: list[str] | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    if not _table_exists("relationships"):
+        return []
     params: dict[str, Any] = {"limit": limit}
     clause = ""
     if selected_ids:
@@ -411,6 +420,8 @@ def list_relationships(*, selected_ids: list[str] | None = None, limit: int = 20
 
 
 def list_aois(limit: int = 200) -> list[dict[str, Any]]:
+    if not _table_exists("aois"):
+        return []
     return fetch_all(
         """
         SELECT
@@ -638,19 +649,19 @@ def query_view(view: GlobeViewState) -> dict[str, Any]:
     timestamp = _utc(view.timestamp)
     entities: list[dict[str, Any]] = []
     clusters: list[dict[str, Any]] = []
-    if "aircraft" in view.enabled_layers:
+    if "aircraft" in view.enabled_layers and _table_exists("aircraft_current" if view.mode == "live" else "aircraft_history"):
         rows, groupings = _query_domain("aircraft_current" if view.mode == "live" else "aircraft_history", "aircraft", timestamp, view)
         entities.extend(rows)
         clusters.extend(groupings)
-    if "vessels" in view.enabled_layers:
+    if "vessels" in view.enabled_layers and _table_exists("vessels_current" if view.mode == "live" else "vessels_history"):
         rows, groupings = _query_domain("vessels_current" if view.mode == "live" else "vessels_history", "vessel", timestamp, view)
         entities.extend(rows)
         clusters.extend(groupings)
-    if "satellites" in view.enabled_layers:
+    if "satellites" in view.enabled_layers and _table_exists("satellites_current" if view.mode == "live" else "satellites_history"):
         rows, groupings = _query_domain("satellites_current" if view.mode == "live" else "satellites_history", "satellite", timestamp, view)
         entities.extend(rows)
         clusters.extend(groupings)
-    if "airspace" in view.enabled_layers:
+    if "airspace" in view.enabled_layers and _table_exists("airspace_overlays"):
         airspace = fetch_all(
             """
             SELECT
@@ -687,7 +698,7 @@ def query_view(view: GlobeViewState) -> dict[str, Any]:
                 for row in airspace
             ]
         )
-    if "aois" in view.enabled_layers:
+    if "aois" in view.enabled_layers and _table_exists("aois"):
         aois = fetch_all(
             """
             SELECT id, name, ST_AsGeoJSON(geom)::json AS geometry, observed_at, updated_at, tags
@@ -734,6 +745,8 @@ def list_entities(view: GlobeViewState) -> list[dict[str, Any]]:
 
 
 def list_satellites_in_view(view: GlobeViewState) -> list[dict[str, Any]]:
+    if not _table_exists("satellites_current" if view.mode == "live" else "satellites_history"):
+        return []
     rows, _ = _query_domain("satellites_current" if view.mode == "live" else "satellites_history", "satellite", _utc(view.timestamp), view)
     return rows
 
@@ -1175,33 +1188,37 @@ def list_source_status() -> list[dict[str, Any]]:
         SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
         FROM aircraft_current
         """
-    ) or {}
+    ) if _table_exists("aircraft_current") else {}
+    aircraft = aircraft or {}
     vessels = fetch_all(
         """
         SELECT provider_name, health_state, last_success, valid_message_count, error_count
         FROM vessel_source_health
         ORDER BY priority DESC, provider_name ASC
         """
-    )
+    ) if _table_exists("vessel_source_health") else []
     satellites = fetch_one(
         """
         SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
         FROM satellites_current
         """
-    ) or {}
+    ) if _table_exists("satellites_current") else {}
+    satellites = satellites or {}
     airspace = fetch_one(
         """
         SELECT MAX(observed_at) AS last_observed_at, COUNT(*)::int AS item_count
         FROM airspace_overlays
         """
-    ) or {}
+    ) if _table_exists("airspace_overlays") else {}
+    airspace = airspace or {}
     events = fetch_one(
         """
         SELECT MAX(detected_at) AS last_observed_at, COUNT(*)::int AS item_count
         FROM events
         WHERE detected_at > NOW() - interval '24 hours'
         """
-    ) or {}
+    ) if _table_exists("events") else {}
+    events = events or {}
     rows = [
         {
             "key": "opensky",
