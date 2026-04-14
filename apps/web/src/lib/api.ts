@@ -40,13 +40,19 @@ function buildUrl(path: string): string {
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const requestUrl = buildUrl(path);
-  const response = await fetch(requestUrl, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    }
-  });
+  let response: Response;
+  try {
+    response = await fetch(requestUrl, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {})
+      }
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Fetch failed for ${path}: ${message}`);
+  }
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status} ${path}`);
   }
