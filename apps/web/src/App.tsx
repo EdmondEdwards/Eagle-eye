@@ -83,6 +83,7 @@ const defaultLayers: LayerState = {
   webcams: false
 };
 
+const AIRCRAFT_COLOR = "#ffd54a";
 const AIRCRAFT_SELECTED_COLOR = "#fff4b3";
 const VESSEL_COLOR = "#6ee7ff";
 const VESSEL_SELECTED_COLOR = "#b6f4ff";
