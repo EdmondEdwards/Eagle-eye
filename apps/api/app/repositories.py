@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -32,6 +33,8 @@ from .schemas import (
     WorkspaceCreate,
     WorkspaceUpdate,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -142,7 +145,17 @@ def _bbox_params(view: GlobeViewState) -> dict[str, float]:
 
 def _bbox_sql() -> str:
     return """
-    geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326)
+    (
+      (:west <= :east AND geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326))
+      OR
+      (
+        :west > :east
+        AND (
+          geom && ST_MakeEnvelope(:west, :south, 180, :north, 4326)
+          OR geom && ST_MakeEnvelope(-180, :south, :east, :north, 4326)
+        )
+      )
+    )
     """
 
 
@@ -649,82 +662,105 @@ def query_view(view: GlobeViewState) -> dict[str, Any]:
     timestamp = _utc(view.timestamp)
     entities: list[dict[str, Any]] = []
     clusters: list[dict[str, Any]] = []
-    if "aircraft" in view.enabled_layers and _table_exists("aircraft_current" if view.mode == "live" else "aircraft_history"):
-        rows, groupings = _query_domain("aircraft_current" if view.mode == "live" else "aircraft_history", "aircraft", timestamp, view)
-        entities.extend(rows)
-        clusters.extend(groupings)
-    if "vessels" in view.enabled_layers and _table_exists("vessels_current" if view.mode == "live" else "vessels_history"):
-        rows, groupings = _query_domain("vessels_current" if view.mode == "live" else "vessels_history", "vessel", timestamp, view)
-        entities.extend(rows)
-        clusters.extend(groupings)
-    if "satellites" in view.enabled_layers and _table_exists("satellites_current" if view.mode == "live" else "satellites_history"):
-        rows, groupings = _query_domain("satellites_current" if view.mode == "live" else "satellites_history", "satellite", timestamp, view)
-        entities.extend(rows)
-        clusters.extend(groupings)
-    if "airspace" in view.enabled_layers and _table_exists("airspace_overlays"):
-        airspace = fetch_all(
-            """
-            SELECT
-              id,
-              name,
-              category,
-              ST_AsGeoJSON(geom)::json AS geometry,
-              observed_at,
-              active_from,
-              active_to,
-              source,
-              source_confidence
-            FROM airspace_overlays
-            WHERE geom IS NOT NULL
-              AND geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326)
-              AND COALESCE(active_to, :timestamp + interval '24 hours') >= :timestamp
-              AND COALESCE(active_from, :timestamp - interval '24 hours') <= :timestamp
-            ORDER BY observed_at DESC
-            LIMIT 200
-            """,
-            {**_bbox_params(view), "timestamp": timestamp},
-        )
-        entities.extend(
-            [
-                {
-                    "id": row["id"],
-                    "entity_kind": "airspace",
-                    "label": row["name"],
-                    "geometry": row["geometry"],
-                    "properties": row,
-                    "observed_at": row["observed_at"],
-                    "predicted_path": [],
-                }
-                for row in airspace
-            ]
-        )
-    if "aois" in view.enabled_layers and _table_exists("aois"):
-        aois = fetch_all(
-            """
-            SELECT id, name, ST_AsGeoJSON(geom)::json AS geometry, observed_at, updated_at, tags
-            FROM aois
-            WHERE geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326)
-            ORDER BY updated_at DESC
-            LIMIT 100
-            """,
-            _bbox_params(view),
-        )
-        entities.extend(
-            [
-                {
-                    "id": str(row["id"]),
-                    "entity_kind": "aoi",
-                    "label": row["name"],
-                    "geometry": row["geometry"],
-                    "properties": {"tags": row.get("tags") or [], "updated_at": row["updated_at"]},
-                    "observed_at": row["observed_at"],
-                    "predicted_path": [],
-                }
-                for row in aois
-            ]
-        )
-    event_rows = list_events(view=view, limit=150) if "events" in view.enabled_layers else []
-    relationship_rows = list_relationships(selected_ids=view.selected_entities, limit=150)
+    try:
+        if "aircraft" in view.enabled_layers and _table_exists("aircraft_current" if view.mode == "live" else "aircraft_history"):
+            rows, groupings = _query_domain("aircraft_current" if view.mode == "live" else "aircraft_history", "aircraft", timestamp, view)
+            entities.extend(rows)
+            clusters.extend(groupings)
+    except Exception:
+        LOGGER.exception("Aircraft view query failed")
+    try:
+        if "vessels" in view.enabled_layers and _table_exists("vessels_current" if view.mode == "live" else "vessels_history"):
+            rows, groupings = _query_domain("vessels_current" if view.mode == "live" else "vessels_history", "vessel", timestamp, view)
+            entities.extend(rows)
+            clusters.extend(groupings)
+    except Exception:
+        LOGGER.exception("Vessel view query failed")
+    try:
+        if "satellites" in view.enabled_layers and _table_exists("satellites_current" if view.mode == "live" else "satellites_history"):
+            rows, groupings = _query_domain("satellites_current" if view.mode == "live" else "satellites_history", "satellite", timestamp, view)
+            entities.extend(rows)
+            clusters.extend(groupings)
+    except Exception:
+        LOGGER.exception("Satellite view query failed")
+    try:
+        if "airspace" in view.enabled_layers and _table_exists("airspace_overlays"):
+            airspace = fetch_all(
+                f"""
+                SELECT
+                  id,
+                  name,
+                  category,
+                  ST_AsGeoJSON(geom)::json AS geometry,
+                  observed_at,
+                  active_from,
+                  active_to,
+                  source,
+                  source_confidence
+                FROM airspace_overlays
+                WHERE geom IS NOT NULL
+                  AND {_bbox_sql()}
+                  AND COALESCE(active_to, :timestamp + interval '24 hours') >= :timestamp
+                  AND COALESCE(active_from, :timestamp - interval '24 hours') <= :timestamp
+                ORDER BY observed_at DESC
+                LIMIT 200
+                """,
+                {**_bbox_params(view), "timestamp": timestamp},
+            )
+            entities.extend(
+                [
+                    {
+                        "id": row["id"],
+                        "entity_kind": "airspace",
+                        "label": row["name"],
+                        "geometry": row["geometry"],
+                        "properties": row,
+                        "observed_at": row["observed_at"],
+                        "predicted_path": [],
+                    }
+                    for row in airspace
+                ]
+            )
+    except Exception:
+        LOGGER.exception("Airspace view query failed")
+    try:
+        if "aois" in view.enabled_layers and _table_exists("aois"):
+            aois = fetch_all(
+                f"""
+                SELECT id, name, ST_AsGeoJSON(geom)::json AS geometry, observed_at, updated_at, tags
+                FROM aois
+                WHERE {_bbox_sql()}
+                ORDER BY updated_at DESC
+                LIMIT 100
+                """,
+                _bbox_params(view),
+            )
+            entities.extend(
+                [
+                    {
+                        "id": str(row["id"]),
+                        "entity_kind": "aoi",
+                        "label": row["name"],
+                        "geometry": row["geometry"],
+                        "properties": {"tags": row.get("tags") or [], "updated_at": row["updated_at"]},
+                        "observed_at": row["observed_at"],
+                        "predicted_path": [],
+                    }
+                    for row in aois
+                ]
+            )
+    except Exception:
+        LOGGER.exception("AOI view query failed")
+    try:
+        event_rows = list_events(view=view, limit=150) if "events" in view.enabled_layers else []
+    except Exception:
+        LOGGER.exception("Event view query failed")
+        event_rows = []
+    try:
+        relationship_rows = list_relationships(selected_ids=view.selected_entities, limit=150)
+    except Exception:
+        LOGGER.exception("Relationship view query failed")
+        relationship_rows = []
     return {
         "view": view.model_dump(),
         "entities": entities,
