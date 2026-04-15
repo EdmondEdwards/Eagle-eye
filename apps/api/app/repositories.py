@@ -1281,6 +1281,8 @@ def assign_tag(payload: TagAssignmentCreate) -> dict[str, Any]:
 
 
 def list_workspaces() -> list[dict[str, Any]]:
+    if not _table_exists("workspaces"):
+        return []
     return fetch_all(
         """
         SELECT id, name, description, camera, time_context, layers, selected_entities, selected_aois, source, created_at, updated_at
