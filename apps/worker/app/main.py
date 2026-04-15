@@ -41,6 +41,7 @@ LOGGER = logging.getLogger("eagle-eye-worker")
 DATABASE_URL = os.environ["DATABASE_URL"]
 REDIS_URL = os.environ["REDIS_URL"]
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
+LIVE_TRACK_STALE_MINUTES = int(os.getenv("LIVE_TRACK_STALE_MINUTES", "10"))
 LIVE_CHANNEL = "eagle-eye:live"
 ENABLE_SATELLITES = os.getenv("ENABLE_SATELLITES", "true").strip().lower() in {"1", "true", "yes", "on"}
 SATELLITE_DEFAULT_SOURCE = os.getenv("SATELLITE_DEFAULT_SOURCE", "celestrak").strip().lower()
@@ -746,6 +747,33 @@ async def retention_loop() -> None:
     while True:
         cutoff = datetime.now(timezone.utc)
         with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM aircraft_current
+                    WHERE observed_at < (:cutoff - (:stale_minutes || ' minutes')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "stale_minutes": LIVE_TRACK_STALE_MINUTES},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM vessels_current
+                    WHERE observed_at < (:cutoff - (:stale_minutes || ' minutes')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "stale_minutes": LIVE_TRACK_STALE_MINUTES},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM satellites_current
+                    WHERE observed_at < (:cutoff - (:stale_minutes || ' minutes')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "stale_minutes": LIVE_TRACK_STALE_MINUTES},
+            )
             conn.execute(
                 text(
                     """
