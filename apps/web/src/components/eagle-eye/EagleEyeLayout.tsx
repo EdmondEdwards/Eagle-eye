@@ -7,12 +7,15 @@ import { TrackSidebar } from "./TrackSidebar";
 
 type EagleEyeLayoutProps = {
   setGlobeRef: (node: HTMLDivElement | null) => void;
-  isLive: boolean;
+  statusLabel: string;
+  statusTone: "live" | "replay" | "paused" | "offline" | "connecting";
   utcDisplay: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
-  onLayersClick: () => void;
-  onMapClick: () => void;
+  layerLabel: string;
+  mapLabel: string;
+  layerOptions: Array<{ label: string; onSelect: () => void }>;
+  mapOptions: Array<{ label: string; onSelect: () => void }>;
   trackCounts: {
     aircraft: number;
     maritime: number;
@@ -48,12 +51,15 @@ export function EagleEyeLayout(props: EagleEyeLayoutProps) {
     <main className="eagle-eye-shell min-h-screen bg-[#060B12] p-4 text-[#EAF4FF]">
       <div className="mx-auto flex h-[calc(100vh-32px)] min-h-[900px] flex-col gap-3">
         <TopHeader
-          isLive={props.isLive}
+          statusLabel={props.statusLabel}
+          statusTone={props.statusTone}
           utcDisplay={props.utcDisplay}
           searchValue={props.searchValue}
           onSearchChange={props.onSearchChange}
-          onLayersClick={props.onLayersClick}
-          onMapClick={props.onMapClick}
+          layerLabel={props.layerLabel}
+          mapLabel={props.mapLabel}
+          layerOptions={props.layerOptions}
+          mapOptions={props.mapOptions}
         />
 
         <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_320px] gap-3">

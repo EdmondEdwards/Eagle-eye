@@ -39,6 +39,7 @@ export function SelectedObjectPanel({
   passLabel,
   nextPassUtc
 }: SelectedObjectPanelProps) {
+  const hasSelection = Boolean(selectedEntity || selectedEvent);
   const noradId = entityValue(selectedEntity, "norad_cat_id") ?? entityValue(selectedEntity, "norad_id") ?? selectedEntity?.id ?? "--";
   const altitude =
     selectedEntity?.entity_kind === "satellite"
@@ -76,9 +77,9 @@ export function SelectedObjectPanel({
         <section>
           <ActionButtonRow
             buttons={[
-              { label: followSelected ? "Following" : "Follow", primary: true, onClick: onToggleFollow },
-              { label: trajectoryEnabled ? "Trajectory On" : "Trajectory", onClick: onToggleTrajectory },
-              { label: showMoreInfo ? "Less Info" : "More Info", onClick: onMoreInfo }
+              { label: followSelected ? "Following" : "Follow", primary: true, onClick: onToggleFollow, disabled: !selectedEntity },
+              { label: trajectoryEnabled ? "Trajectory On" : "Trajectory", onClick: onToggleTrajectory, disabled: !selectedEntity },
+              { label: showMoreInfo ? "Less Info" : "More Info", onClick: onMoreInfo, disabled: !hasSelection }
             ]}
           />
         </section>

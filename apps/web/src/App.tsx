@@ -33,6 +33,8 @@ import { api, connectLiveFeed } from "./lib/api";
 
 type LayerState = Record<string, boolean>;
 type Selection = { kind: "entity" | "cluster" | "event"; id: string } | null;
+type LayerPresetName = "All Layers" | "Space + Events" | "Surface + Alerts" | "Tracks Only";
+type MapPresetName = "Global" | "Atlantic" | "Europe" | "Indo-Pacific";
 
 const initialLayers: LayerState = Object.fromEntries(layerDefinitions.map((layer) => [layer.key, true]));
 
@@ -215,10 +217,12 @@ function App() {
   const [socketOnline, setSocketOnline] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [followSelected, setFollowSelected] = useState(false);
-  const [trajectoryEnabled, setTrajectoryEnabled] = useState(true);
+  const [trajectoryEnabled, setTrajectoryEnabled] = useState(false);
   const [showMoreInfo, setShowMoreInfo] = useState(false);
   const [activeTrack, setActiveTrack] = useState<"aircraft" | "maritime" | "satellites" | "alerts" | null>(null);
   const [effectiveViewMode, setEffectiveViewMode] = useState<"live" | "replay">("live");
+  const [layerLabel, setLayerLabel] = useState<LayerPresetName>("All Layers");
+  const [mapLabel, setMapLabel] = useState<MapPresetName>("Global");
   const [statusText, setStatusText] = useState("Connecting to backend");
   const [cameraHeight, setCameraHeight] = useState(19_000_000);
   const [isViewLoading, setIsViewLoading] = useState(true);
@@ -254,6 +258,21 @@ function App() {
   const selectedIdentifiers = useMemo(() => identifierRows(selectedEntity, bundle), [bundle, selectedEntity]);
 
   const timelineEvents = useMemo(() => (recentEvents.length ? recentEvents.slice(0, 3) : (viewData?.events ?? []).slice(0, 3)), [recentEvents, viewData?.events]);
+  const runtimeStatus = useMemo(() => {
+    if (!timeState) {
+      return { label: "SYNC", tone: "connecting" as const };
+    }
+    if (timeState.mode === "paused") {
+      return { label: "PAUSED", tone: "paused" as const };
+    }
+    if (timeState.mode === "replay" || effectiveViewMode === "replay") {
+      return { label: "REPLAY", tone: "replay" as const };
+    }
+    if (socketOnline) {
+      return { label: "LIVE", tone: "live" as const };
+    }
+    return { label: "OFFLINE", tone: "offline" as const };
+  }, [effectiveViewMode, socketOnline, timeState]);
 
   useEffect(() => {
     api
@@ -274,7 +293,8 @@ function App() {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => {
       if (!viewerRef.current || !timeState || refreshInFlightRef.current) return;
-      const payload = buildViewState(viewerRef.current, timeState, layers, selectedEntity ? [selectedEntity.id] : [], "live");
+      const requestedMode = timeState.mode === "live" ? "live" : "replay";
+      const payload = buildViewState(viewerRef.current, timeState, layers, selectedEntity ? [selectedEntity.id] : [], requestedMode);
       if (!payload) return;
       refreshInFlightRef.current = true;
       setIsViewLoading(true);
@@ -282,7 +302,7 @@ function App() {
         .queryView(payload)
         .then(async (response) => {
           const isEmpty = response.entities.length === 0 && response.events.length === 0 && response.clusters.length === 0;
-          if (isEmpty && timeState.current_timestamp) {
+          if (isEmpty && requestedMode === "live" && timeState.current_timestamp) {
             const replayPayload = { ...payload, mode: "replay" as const, timestamp: timeState.current_timestamp };
             try {
               const replayResponse = await api.queryView(replayPayload);
@@ -302,10 +322,12 @@ function App() {
             }
           }
           startTransition(() => {
-            setEffectiveViewMode("live");
+            setEffectiveViewMode(requestedMode);
             setViewData(response);
             setStatusText(
-              `${response.entities.length} tracks, ${response.events.length} in-view events, ${response.clusters.length} clusters`
+              isEmpty
+                ? `No ${requestedMode} data returned for the current viewport`
+                : `${response.entities.length} tracks, ${response.events.length} in-view events, ${response.clusters.length} clusters`
             );
           });
         })
@@ -324,6 +346,7 @@ function App() {
     const viewer = new Viewer(globeRef.current, {
       animation: false,
       baseLayerPicker: false,
+      fullscreenButton: false,
       geocoder: false,
       timeline: false,
       sceneModePicker: false,
@@ -349,15 +372,6 @@ function App() {
       viewer.scene.skyAtmosphere.saturationShift = -0.2;
       viewer.scene.skyAtmosphere.brightnessShift = -0.4;
     }
-    viewer.camera.setView({
-      destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
-      orientation: {
-        heading: 0,
-        pitch: CesiumMath.toRadians(-55),
-        roll: 0
-      }
-    });
-
     const handler = new ScreenSpaceEventHandler(viewer.canvas);
     handler.setInputAction((movement: { position: Cartesian2 }) => {
       const picked = viewer.scene.pick(movement.position) as Entity | undefined;
@@ -372,7 +386,10 @@ function App() {
 
     viewer.camera.moveEnd.addEventListener(onMoveEnd);
     viewerRef.current = viewer;
-    scheduleRefresh(400);
+    window.setTimeout(() => {
+      applyMapPreset("Global", 0);
+      scheduleRefresh(400);
+    }, 0);
 
     return () => {
       viewer.camera.moveEnd.removeEventListener(onMoveEnd);
@@ -464,31 +481,35 @@ function App() {
     if (!viewerRef.current || !viewData) return;
     const viewer = viewerRef.current;
     viewer.entities.removeAll();
+    const showDenseLabels = cameraHeight < 6_500_000;
+    const showContextLabels = cameraHeight < 10_000_000;
 
     for (const cluster of viewData.clusters.slice(0, cameraHeight >= 12_000_000 ? 120 : 180)) {
       viewer.entities.add({
         id: cluster.id,
         position: Cartesian3.fromDegrees(cluster.lon, cluster.lat),
         point: {
-          pixelSize: 12 + Math.min(cluster.count, 24),
+          pixelSize: 14 + Math.min(cluster.count, 26),
           color:
             cluster.entity_kind === "aircraft"
               ? Color.fromCssColorString("#58c7ff")
               : cluster.entity_kind === "vessel"
                 ? Color.fromCssColorString("#6eff97")
                 : Color.fromCssColorString("#ffaa4d"),
-          outlineColor: Color.BLACK,
-          outlineWidth: 1
+          outlineColor: Color.WHITE.withAlpha(0.9),
+          outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY
         },
         label:
-          cameraHeight < 9_000_000
+          showContextLabels
             ? {
                 text: `${cluster.count}`,
                 font: "600 12px IBM Plex Sans",
                 fillColor: Color.WHITE,
                 style: LabelStyle.FILL_AND_OUTLINE,
                 verticalOrigin: VerticalOrigin.BOTTOM,
-                pixelOffset: new Cartesian2(0, -12)
+                pixelOffset: new Cartesian2(0, -14),
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
               }
             : undefined,
         properties: { payload: { kind: "cluster", id: cluster.id } }
@@ -504,11 +525,24 @@ function App() {
           id: event.id,
           position: Cartesian3.fromDegrees(point.lon, point.lat),
           point: {
-            pixelSize: 9,
+            pixelSize: selection?.id === event.id ? 13 : 10,
             color: Color.fromCssColorString(color),
             outlineColor: Color.WHITE,
-            outlineWidth: 1
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
+          label:
+            selection?.id === event.id || showDenseLabels
+              ? {
+                  text: event.title,
+                  font: "600 11px IBM Plex Sans",
+                  fillColor: Color.WHITE,
+                  style: LabelStyle.FILL_AND_OUTLINE,
+                  verticalOrigin: VerticalOrigin.TOP,
+                  pixelOffset: new Cartesian2(0, 10),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY
+                }
+              : undefined,
           properties: { payload: { kind: "event", id: event.id } }
         });
       }
@@ -543,20 +577,23 @@ function App() {
           id: entity.id,
           position: Cartesian3.fromDegrees(point.lon, point.lat),
           point: {
-            pixelSize: selection?.id === entity.id ? 10 : 7,
+            pixelSize: selection?.id === entity.id ? 14 : 9,
             color: Color.fromCssColorString(color),
-            outlineColor: Color.BLACK,
-            outlineWidth: 1
+            outlineColor: Color.WHITE.withAlpha(selection?.id === entity.id ? 1 : 0.85),
+            outlineWidth: selection?.id === entity.id ? 2.5 : 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY
           },
           label:
-            selection?.id === entity.id
+            selection?.id === entity.id || (showDenseLabels && entity === filteredEntities[0])
               ? {
                   text: entity.label,
                   font: "600 12px IBM Plex Sans",
                   fillColor: Color.WHITE,
                   show: true,
+                  style: LabelStyle.FILL_AND_OUTLINE,
                   verticalOrigin: VerticalOrigin.TOP,
-                  pixelOffset: new Cartesian2(0, 10)
+                  pixelOffset: new Cartesian2(0, 12),
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY
                 }
               : undefined,
           properties: { payload: { kind: "entity", id: entity.id } }
@@ -631,17 +668,7 @@ function App() {
   }, [followSelected, selectedEntity]);
 
   function resetGlobalMap() {
-    const viewer = viewerRef.current;
-    if (!viewer) return;
-    viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
-      orientation: {
-        heading: 0,
-        pitch: CesiumMath.toRadians(-55),
-        roll: 0
-      },
-      duration: 0.8
-    });
+    applyMapPreset("Global");
     scheduleRefresh(120);
   }
 
@@ -665,52 +692,6 @@ function App() {
       destination: Cartesian3.fromDegrees(point.lon, point.lat, 3_500_000),
       duration: 0.8
     });
-  }
-
-  function cycleLayerPreset() {
-    const allOn = Object.values(layers).every(Boolean);
-    const satelliteFocus = layers.satellites && layers.events && !layers.aircraft && !layers.vessels;
-    if (allOn) {
-      setLayers((current) => ({
-        ...current,
-        aircraft: false,
-        vessels: false,
-        satellites: true,
-        events: true,
-        eonet: true,
-        firms: true,
-        nws: true
-      }));
-      setStatusText("Layer preset: space + events");
-      return;
-    }
-    if (satelliteFocus) {
-      setLayers((current) => ({
-        ...current,
-        aircraft: true,
-        vessels: true,
-        satellites: true,
-        events: true,
-        eonet: true,
-        firms: true,
-        nws: true,
-        aois: true,
-        airspace: true
-      }));
-      setStatusText("Layer preset: all");
-      return;
-    }
-    setLayers((current) => ({
-      ...current,
-      aircraft: true,
-      vessels: true,
-      satellites: false,
-      events: true,
-      eonet: true,
-      firms: true,
-      nws: true
-    }));
-    setStatusText("Layer preset: surface + alerts");
   }
 
   function handleTrackClick(track: "aircraft" | "maritime" | "satellites" | "alerts") {
@@ -749,17 +730,121 @@ function App() {
     setShowMoreInfo(true);
   }
 
+  function applyMapPreset(name: MapPresetName, duration = 0.8) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    setMapLabel(name);
+    if (name === "Global") {
+      viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(14, 18, 26_000_000),
+        orientation: { heading: 0, pitch: CesiumMath.toRadians(-90), roll: 0 },
+        duration
+      });
+      return;
+    }
+    if (name === "Atlantic") {
+      viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(-35, 25, 15_000_000),
+        orientation: { heading: 0, pitch: CesiumMath.toRadians(-72), roll: 0 },
+        duration
+      });
+      return;
+    }
+    if (name === "Europe") {
+      viewer.camera.flyTo({
+        destination: Cartesian3.fromDegrees(14, 46, 8_500_000),
+        orientation: { heading: 0, pitch: CesiumMath.toRadians(-65), roll: 0 },
+        duration
+      });
+      return;
+    }
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(120, 10, 13_000_000),
+      orientation: { heading: 0, pitch: CesiumMath.toRadians(-70), roll: 0 },
+      duration
+    });
+  }
+
+  function applyLayerPreset(name: LayerPresetName) {
+    setLayerLabel(name);
+    if (name === "All Layers") {
+      setLayers({ ...initialLayers });
+      setStatusText("Layer preset: all");
+      return;
+    }
+    if (name === "Space + Events") {
+      setLayers((current) => ({
+        ...current,
+        aircraft: false,
+        vessels: false,
+        satellites: true,
+        airspace: false,
+        aois: true,
+        events: true,
+        eonet: true,
+        firms: true,
+        nws: true
+      }));
+      setStatusText("Layer preset: space + events");
+      return;
+    }
+    if (name === "Surface + Alerts") {
+      setLayers((current) => ({
+        ...current,
+        aircraft: true,
+        vessels: true,
+        satellites: false,
+        airspace: true,
+        aois: true,
+        events: true,
+        eonet: true,
+        firms: true,
+        nws: true
+      }));
+      setStatusText("Layer preset: surface + alerts");
+      return;
+    }
+    setLayers((current) => ({
+      ...current,
+      aircraft: true,
+      vessels: true,
+      satellites: true,
+      airspace: false,
+      aois: false,
+      events: false,
+      eonet: false,
+      firms: false,
+      nws: false
+    }));
+    setStatusText("Layer preset: tracks only");
+  }
+
   return (
     <EagleEyeLayout
       setGlobeRef={(node) => {
         globeRef.current = node;
       }}
-      isLive={socketOnline}
+      statusLabel={runtimeStatus.label}
+      statusTone={runtimeStatus.tone}
       utcDisplay={`${formatUtcDateTime(timeState?.current_timestamp)}${effectiveViewMode === "replay" ? " · REPLAY" : ""}`}
       searchValue={searchValue}
       onSearchChange={setSearchValue}
-      onLayersClick={cycleLayerPreset}
-      onMapClick={resetGlobalMap}
+      layerLabel={layerLabel}
+      mapLabel={mapLabel}
+      layerOptions={[
+        { label: "All Layers", onSelect: () => applyLayerPreset("All Layers") },
+        { label: "Space + Events", onSelect: () => applyLayerPreset("Space + Events") },
+        { label: "Surface + Alerts", onSelect: () => applyLayerPreset("Surface + Alerts") },
+        { label: "Tracks Only", onSelect: () => applyLayerPreset("Tracks Only") }
+      ]}
+      mapOptions={[
+        { label: "Global", onSelect: () => applyMapPreset("Global") },
+        { label: "Atlantic", onSelect: () => applyMapPreset("Atlantic") },
+        { label: "Europe", onSelect: () => applyMapPreset("Europe") },
+        { label: "Indo-Pacific", onSelect: () => applyMapPreset("Indo-Pacific") },
+        { label: "Reset View", onSelect: resetGlobalMap }
+      ]}
       trackCounts={trackCounts}
       filterValues={selectedIdentifiers}
       activeTrack={activeTrack}
