@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 
 type GlobeViewportProps = {
-  globeRef: RefObject<HTMLDivElement>;
+  globeRef: RefObject<HTMLDivElement | null>;
   loading: boolean;
   statusText: string;
 };
