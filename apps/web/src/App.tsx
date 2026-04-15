@@ -60,6 +60,22 @@ function fallbackViewBounds(viewer: Viewer): Pick<GlobeViewState, "west" | "sout
   };
 }
 
+function longitudeSpan(west: number, east: number): number {
+  return east >= west ? east - west : 360 - west + east;
+}
+
+function hasUsableBounds(bounds: Pick<GlobeViewState, "west" | "south" | "east" | "north">, cameraHeight: number): boolean {
+  const values = [bounds.west, bounds.south, bounds.east, bounds.north];
+  if (values.some((value) => !Number.isFinite(value))) return false;
+  const latSpan = bounds.north - bounds.south;
+  const lonSpan = longitudeSpan(bounds.west, bounds.east);
+  if (latSpan <= 0.5 || lonSpan <= 0.5) return false;
+  if (bounds.north <= bounds.south) return false;
+  if (cameraHeight > 2_000_000 && (latSpan < 4 || lonSpan < 4)) return false;
+  if (latSpan > 175 || lonSpan > 359.5) return false;
+  return true;
+}
+
 function buildViewState(
   viewer: Viewer,
   timeState: TimeState,
@@ -68,13 +84,16 @@ function buildViewState(
   modeOverride?: GlobeViewState["mode"]
 ): GlobeViewState | null {
   const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
-  const bounds = rectangle
+  const computedBounds = rectangle
     ? {
         west: normalizeLongitude(CesiumMath.toDegrees(rectangle.west)),
         south: clampLatitude(CesiumMath.toDegrees(rectangle.south)),
         east: normalizeLongitude(CesiumMath.toDegrees(rectangle.east)),
         north: clampLatitude(CesiumMath.toDegrees(rectangle.north))
       }
+    : null;
+  const bounds = computedBounds && hasUsableBounds(computedBounds, viewer.camera.positionCartographic.height)
+    ? computedBounds
     : fallbackViewBounds(viewer);
 
   return {

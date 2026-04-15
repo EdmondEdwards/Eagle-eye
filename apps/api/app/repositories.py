@@ -47,6 +47,18 @@ def _utc(value: datetime | None = None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def _default_time_state() -> dict[str, Any]:
+    now = _utc()
+    return {
+        "mode": "live",
+        "status": "playing",
+        "current_timestamp": now,
+        "playback_speed": 1.0,
+        "step_seconds": 60,
+        "updated_at": now,
+    }
+
+
 def _live_track_interval_sql() -> str:
     return f"interval '{LIVE_TRACK_STALE_MINUTES} minutes'"
 
@@ -56,30 +68,45 @@ def _table_exists(table_name: str) -> bool:
     return bool(row and row.get("relation_name"))
 
 
-def get_time_state() -> dict[str, Any]:
-    execute(
-        """
-        CREATE TABLE IF NOT EXISTS time_state (
-          singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
-          mode TEXT NOT NULL DEFAULT 'live',
-          status TEXT NOT NULL DEFAULT 'playing',
-          "current_timestamp" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          playback_speed DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-          step_seconds INTEGER NOT NULL DEFAULT 60,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CHECK (singleton = TRUE),
-          CHECK (mode IN ('live', 'paused', 'replay', 'simulate')),
-          CHECK (status IN ('playing', 'paused'))
+def _ensure_time_state_seeded() -> None:
+    if not _table_exists("time_state"):
+        execute(
+            """
+            CREATE TABLE IF NOT EXISTS time_state (
+              singleton BOOLEAN PRIMARY KEY DEFAULT TRUE,
+              mode TEXT NOT NULL DEFAULT 'live',
+              status TEXT NOT NULL DEFAULT 'playing',
+              "current_timestamp" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              playback_speed DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+              step_seconds INTEGER NOT NULL DEFAULT 60,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+              CHECK (singleton = TRUE),
+              CHECK (mode IN ('live', 'paused', 'replay', 'simulate')),
+              CHECK (status IN ('playing', 'paused'))
+            )
+            """
         )
+    row = fetch_one(
+        """
+        SELECT singleton
+        FROM time_state
+        WHERE singleton = TRUE
         """
     )
+    if row:
+        return
     execute(
         """
         INSERT INTO time_state (singleton, mode, status, "current_timestamp", playback_speed, step_seconds, updated_at)
-        VALUES (TRUE, 'live', 'playing', NOW(), 1.0, 60, NOW())
+        VALUES (TRUE, :mode, :status, :current_timestamp, :playback_speed, :step_seconds, :updated_at)
         ON CONFLICT (singleton) DO NOTHING
-        """
+        """,
+        _default_time_state(),
     )
+
+
+def get_time_state() -> dict[str, Any]:
+    _ensure_time_state_seeded()
     record = fetch_one(
         """
         SELECT mode, status, "current_timestamp", playback_speed, step_seconds, updated_at
@@ -88,24 +115,11 @@ def get_time_state() -> dict[str, Any]:
         """
     )
     state = normalize_time_state(record or {})
-    computed = next_clock_state(state)
-    execute(
-        """
-        UPDATE time_state
-        SET mode = :mode,
-            status = :status,
-            "current_timestamp" = :current_timestamp,
-            playback_speed = :playback_speed,
-            step_seconds = :step_seconds,
-            updated_at = :updated_at
-        WHERE singleton = TRUE
-        """,
-        computed,
-    )
-    return computed
+    return next_clock_state(state)
 
 
 def set_time_state(payload: TimeStateUpdate) -> dict[str, Any]:
+    _ensure_time_state_seeded()
     current = get_time_state()
     updated = {**current}
     incoming = payload.model_dump(exclude_none=True)
@@ -137,7 +151,7 @@ def set_time_state(payload: TimeStateUpdate) -> dict[str, Any]:
         """,
         updated,
     )
-    return get_time_state()
+    return normalize_time_state(updated)
 
 
 def _bbox_params(view: GlobeViewState) -> dict[str, float]:
