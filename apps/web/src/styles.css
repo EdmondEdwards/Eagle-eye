@@ -77,6 +77,70 @@ select {
   inset: 0;
 }
 
+.globe-status-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.globe-loading-card {
+  min-width: 320px;
+  max-width: 420px;
+  padding: 18px 20px;
+  border-radius: 18px;
+  background: rgba(8, 14, 22, 0.82);
+  border: 1px solid rgba(230, 238, 245, 0.1);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+}
+
+.globe-loading-card.empty {
+  max-width: 460px;
+}
+
+.globe-loading-card strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 16px;
+}
+
+.globe-loading-card p {
+  margin: 10px 0 0;
+}
+
+.globe-loading-bar {
+  margin-top: 14px;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.globe-loading-bar-fill {
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--accent));
+  animation: globe-loading-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes globe-loading-slide {
+  0% {
+    transform: translateX(-115%);
+  }
+
+  60% {
+    transform: translateX(180%);
+  }
+
+  100% {
+    transform: translateX(180%);
+  }
+}
+
 .top-strip {
   position: absolute;
   top: 18px;

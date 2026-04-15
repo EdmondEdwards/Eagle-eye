@@ -61,6 +61,24 @@ function normalizeLongitude(value: number): number {
   return ((value + 540) % 360) - 180;
 }
 
+function clampLatitude(value: number): number {
+  return Math.max(-85, Math.min(85, value));
+}
+
+function fallbackViewBounds(viewer: Viewer): Pick<GlobeViewState, "west" | "south" | "east" | "north"> {
+  const camera = viewer.camera.positionCartographic;
+  const centerLon = normalizeLongitude(CesiumMath.toDegrees(camera.longitude));
+  const centerLat = clampLatitude(CesiumMath.toDegrees(camera.latitude));
+  const spanLat = Math.min(140, Math.max(18, camera.height / 125_000));
+  const spanLon = Math.min(220, Math.max(24, spanLat * 1.6));
+  return {
+    west: normalizeLongitude(centerLon - spanLon / 2),
+    south: clampLatitude(centerLat - spanLat / 2),
+    east: normalizeLongitude(centerLon + spanLon / 2),
+    north: clampLatitude(centerLat + spanLat / 2)
+  };
+}
+
 function viewModeFromTime(mode: TimeState["mode"]): GlobeViewState["mode"] {
   if (mode === "simulate") return "simulate";
   if (mode === "replay" || mode === "paused") return "replay";
@@ -75,16 +93,28 @@ function buildViewState(
   selectedAois: string[]
 ): GlobeViewState | null {
   const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
-  if (!rectangle) return null;
+  const bounds = rectangle
+    ? {
+        west: normalizeLongitude(CesiumMath.toDegrees(rectangle.west)),
+        south: clampLatitude(CesiumMath.toDegrees(rectangle.south)),
+        east: normalizeLongitude(CesiumMath.toDegrees(rectangle.east)),
+        north: clampLatitude(CesiumMath.toDegrees(rectangle.north))
+      }
+    : fallbackViewBounds(viewer);
+  const rawWidth = ((bounds.east - bounds.west + 360) % 360);
+  const width = rawWidth === 0 ? 360 : rawWidth;
+  const height = bounds.north - bounds.south;
+  const resolvedBounds =
+    !Number.isFinite(width) || !Number.isFinite(height) || width < 0.5 || height < 0.5 ? fallbackViewBounds(viewer) : bounds;
   const enabledLayers = Object.entries(layers)
     .filter(([, enabled]) => enabled)
     .map(([key]) => key);
 
   return {
-    west: normalizeLongitude(CesiumMath.toDegrees(rectangle.west)),
-    south: CesiumMath.toDegrees(rectangle.south),
-    east: normalizeLongitude(CesiumMath.toDegrees(rectangle.east)),
-    north: CesiumMath.toDegrees(rectangle.north),
+    west: resolvedBounds.west,
+    south: resolvedBounds.south,
+    east: resolvedBounds.east,
+    north: resolvedBounds.north,
     camera_height: viewer.camera.positionCartographic.height,
     heading: CesiumMath.toDegrees(viewer.camera.heading),
     pitch: CesiumMath.toDegrees(viewer.camera.pitch),
@@ -177,6 +207,7 @@ function App() {
   const [statusText, setStatusText] = useState("Waiting for backend");
   const [socketOnline, setSocketOnline] = useState(false);
   const [cameraHeight, setCameraHeight] = useState(19_000_000);
+  const [isViewLoading, setIsViewLoading] = useState(true);
 
   const selectedEntity = useMemo(
     () => viewData?.entities.find((entity) => entity.id === selection?.id) ?? null,
@@ -294,6 +325,7 @@ function App() {
       return;
     }
     refreshInFlightRef.current = true;
+    setIsViewLoading(true);
     try {
       const response = await api.queryView(payload);
       startTransition(() => {
@@ -308,6 +340,7 @@ function App() {
         refreshQueuedRef.current = false;
         scheduleRefresh(180);
       }
+      setIsViewLoading(false);
     }
   }
 
@@ -887,6 +920,25 @@ function App() {
           </div>
         </div>
         <div ref={globeRef} className="globe-canvas" />
+        {isViewLoading ? (
+          <div className="globe-status-overlay">
+            <div className="globe-loading-card">
+              <span className="eyebrow">Loading View</span>
+              <strong>Querying live traffic in camera view</strong>
+              <div className="globe-loading-bar">
+                <div className="globe-loading-bar-fill" />
+              </div>
+            </div>
+          </div>
+        ) : viewData && viewData.stats.entities === 0 && viewData.stats.clusters === 0 ? (
+          <div className="globe-status-overlay">
+            <div className="globe-loading-card empty">
+              <span className="eyebrow">No In-View Traffic</span>
+              <strong>The current camera window returned no live entities.</strong>
+              <p className="muted">Pan, zoom out slightly, or wait for the next refresh.</p>
+            </div>
+          </div>
+        ) : null}
         <div className="floating-actions">
           <button onClick={() => setFollowSelected((value) => !value)}>{followSelected ? "Unfollow" : "Follow"}</button>
           <button onClick={createQuickCase}>Create case</button>
