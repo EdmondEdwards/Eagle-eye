@@ -4,6 +4,7 @@ import { TimelineEventRow } from "./TimelineEventRow";
 
 type TimelinePanelProps = {
   timelineEvents: EventRecord[];
+  onEventClick: (event: EventRecord) => void;
 };
 
 function eventMeta(event: EventRecord) {
@@ -24,7 +25,7 @@ function eventMeta(event: EventRecord) {
   return { icon: <DistressIcon className="h-4 w-4" />, color: "#FF7D4D", title, location };
 }
 
-export function TimelinePanel({ timelineEvents }: TimelinePanelProps) {
+export function TimelinePanel({ timelineEvents, onEventClick }: TimelinePanelProps) {
   return (
     <section className="panel-surface h-[190px] p-3">
       <div className="flex h-full flex-col gap-3">
@@ -65,6 +66,7 @@ export function TimelinePanel({ timelineEvents }: TimelinePanelProps) {
                   time={new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date(event.start_time))}
                   title={meta.title}
                   location={meta.location}
+                  onClick={() => onEventClick(event)}
                 />
               );
             })}

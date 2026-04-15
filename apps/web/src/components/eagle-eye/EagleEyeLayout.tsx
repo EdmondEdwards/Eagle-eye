@@ -11,6 +11,8 @@ type EagleEyeLayoutProps = {
   utcDisplay: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  onLayersClick: () => void;
+  onMapClick: () => void;
   trackCounts: {
     aircraft: number;
     maritime: number;
@@ -18,6 +20,10 @@ type EagleEyeLayoutProps = {
     alerts: number;
   };
   filterValues: string[];
+  activeTrack: "aircraft" | "maritime" | "satellites" | "alerts" | null;
+  onTrackClick: (track: "aircraft" | "maritime" | "satellites" | "alerts") => void;
+  onFilterClick: (value: string) => void;
+  onFilterActionClick: (value: string) => void;
   selectedTitle: string;
   selectedEntity: EntityRecord | null;
   selectedEvent: EventRecord | null;
@@ -25,7 +31,12 @@ type EagleEyeLayoutProps = {
   satelliteFov: SatelliteFovResponse | null;
   followSelected: boolean;
   onToggleFollow: () => void;
+  onToggleTrajectory: () => void;
+  onMoreInfo: () => void;
+  trajectoryEnabled: boolean;
+  showMoreInfo: boolean;
   timelineEvents: EventRecord[];
+  onTimelineEventClick: (event: EventRecord) => void;
   loading: boolean;
   statusText: string;
   passLabel: string;
@@ -41,10 +52,19 @@ export function EagleEyeLayout(props: EagleEyeLayoutProps) {
           utcDisplay={props.utcDisplay}
           searchValue={props.searchValue}
           onSearchChange={props.onSearchChange}
+          onLayersClick={props.onLayersClick}
+          onMapClick={props.onMapClick}
         />
 
         <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_320px] gap-3">
-          <TrackSidebar trackCounts={props.trackCounts} filterValues={props.filterValues} />
+          <TrackSidebar
+            trackCounts={props.trackCounts}
+            filterValues={props.filterValues}
+            activeTrack={props.activeTrack}
+            onTrackClick={props.onTrackClick}
+            onFilterClick={props.onFilterClick}
+            onFilterActionClick={props.onFilterActionClick}
+          />
           <GlobeViewport setGlobeRef={props.setGlobeRef} loading={props.loading} statusText={props.statusText} />
           <SelectedObjectPanel
             selectedTitle={props.selectedTitle}
@@ -54,12 +74,16 @@ export function EagleEyeLayout(props: EagleEyeLayoutProps) {
             satelliteFov={props.satelliteFov}
             followSelected={props.followSelected}
             onToggleFollow={props.onToggleFollow}
+            onToggleTrajectory={props.onToggleTrajectory}
+            onMoreInfo={props.onMoreInfo}
+            trajectoryEnabled={props.trajectoryEnabled}
+            showMoreInfo={props.showMoreInfo}
             passLabel={props.passLabel}
             nextPassUtc={props.nextPassUtc}
           />
         </div>
 
-        <TimelinePanel timelineEvents={props.timelineEvents} />
+        <TimelinePanel timelineEvents={props.timelineEvents} onEventClick={props.onTimelineEventClick} />
       </div>
     </main>
   );

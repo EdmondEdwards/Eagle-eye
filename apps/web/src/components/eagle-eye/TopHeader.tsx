@@ -7,9 +7,9 @@ import {
   SearchIcon
 } from "./icons";
 
-function HeaderSelect({ icon, label }: { icon: ReactNode; label: string }) {
+function HeaderSelect({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
   return (
-    <button className="flex h-10 items-center gap-2 rounded-[6px] border border-white/10 bg-white/[0.03] px-3 text-[13px] text-[#d4e6f7] transition hover:border-[#58C7FF]/30 hover:bg-[#58C7FF]/[0.06]">
+    <button type="button" onClick={onClick} className="flex h-10 items-center gap-2 rounded-[6px] border border-white/10 bg-white/[0.03] px-3 text-[13px] text-[#d4e6f7] transition hover:border-[#58C7FF]/30 hover:bg-[#58C7FF]/[0.06]">
       <span className="text-[#8fb4d1]">{icon}</span>
       <span>{label}</span>
       <ChevronDownIcon className="h-3.5 w-3.5 text-[#8ca2b7]" />
@@ -22,9 +22,11 @@ type TopHeaderProps = {
   utcDisplay: string;
   searchValue: string;
   onSearchChange: (value: string) => void;
+  onLayersClick: () => void;
+  onMapClick: () => void;
 };
 
-export function TopHeader({ isLive, utcDisplay, searchValue, onSearchChange }: TopHeaderProps) {
+export function TopHeader({ isLive, utcDisplay, searchValue, onSearchChange, onLayersClick, onMapClick }: TopHeaderProps) {
   return (
     <header className="panel-surface flex h-[72px] items-center justify-between px-5">
       <div className="flex items-center gap-4">
@@ -49,8 +51,8 @@ export function TopHeader({ isLive, utcDisplay, searchValue, onSearchChange }: T
           <span>LIVE</span>
         </div>
         <div className="text-[13px] text-[#a7b8ca]">{utcDisplay}</div>
-        <HeaderSelect icon={<LayersIcon className="h-4 w-4" />} label="Layers" />
-        <HeaderSelect icon={<GlobeIcon className="h-4 w-4" />} label="Map" />
+        <HeaderSelect icon={<LayersIcon className="h-4 w-4" />} label="Layers" onClick={onLayersClick} />
+        <HeaderSelect icon={<GlobeIcon className="h-4 w-4" />} label="Map" onClick={onMapClick} />
       </div>
 
       <div className="flex items-center gap-[14px]">

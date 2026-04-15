@@ -11,6 +11,10 @@ type SelectedObjectPanelProps = {
   satelliteFov: SatelliteFovResponse | null;
   followSelected: boolean;
   onToggleFollow: () => void;
+  onToggleTrajectory: () => void;
+  onMoreInfo: () => void;
+  trajectoryEnabled: boolean;
+  showMoreInfo: boolean;
   passLabel: string;
   nextPassUtc: string;
 };
@@ -28,6 +32,10 @@ export function SelectedObjectPanel({
   satelliteFov,
   followSelected,
   onToggleFollow,
+  onToggleTrajectory,
+  onMoreInfo,
+  trajectoryEnabled,
+  showMoreInfo,
   passLabel,
   nextPassUtc
 }: SelectedObjectPanelProps) {
@@ -69,8 +77,8 @@ export function SelectedObjectPanel({
           <ActionButtonRow
             buttons={[
               { label: followSelected ? "Following" : "Follow", primary: true, onClick: onToggleFollow },
-              { label: "Trajectory" },
-              { label: "More Info" }
+              { label: trajectoryEnabled ? "Trajectory On" : "Trajectory", onClick: onToggleTrajectory },
+              { label: showMoreInfo ? "Less Info" : "More Info", onClick: onMoreInfo }
             ]}
           />
         </section>
@@ -83,6 +91,15 @@ export function SelectedObjectPanel({
           <StatRow label="Inclination" value={inclination === "--" ? "--" : `${inclination}°`} />
           <StatRow label="Period" value={period === "--" ? (satelliteFov ? `${satelliteFov.swath_km.toFixed(0)} km swath` : "--") : `${period} min`} />
           <StatRow label="Next Pass" value={passLabel} aside={nextPassUtc} />
+          {showMoreInfo ? (
+            <div className="mt-4 rounded-[8px] border border-white/8 bg-white/[0.02] p-3 text-[12px] text-[#96abbe]">
+              <div className="mb-2 text-[11px] tracking-[0.18em] text-[#a8bed3]">DETAILS</div>
+              <div>Entity Kind: {selectedEntity?.entity_kind ?? selectedEvent?.category ?? "--"}</div>
+              <div className="mt-1">Observed: {selectedEntity?.observed_at ?? selectedEvent?.start_time ?? "--"}</div>
+              <div className="mt-1">Related Events: {bundle?.events?.length ?? 0}</div>
+              <div className="mt-1">Watchlists: {bundle?.watchlists?.length ?? 0}</div>
+            </div>
+          ) : null}
         </section>
       </div>
     </aside>

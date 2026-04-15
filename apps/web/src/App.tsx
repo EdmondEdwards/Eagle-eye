@@ -58,7 +58,13 @@ function fallbackViewBounds(viewer: Viewer): Pick<GlobeViewState, "west" | "sout
   };
 }
 
-function buildViewState(viewer: Viewer, timeState: TimeState, layers: LayerState, selectedEntities: string[]): GlobeViewState | null {
+function buildViewState(
+  viewer: Viewer,
+  timeState: TimeState,
+  layers: LayerState,
+  selectedEntities: string[],
+  modeOverride?: GlobeViewState["mode"]
+): GlobeViewState | null {
   const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
   const bounds = rectangle
     ? {
@@ -79,7 +85,7 @@ function buildViewState(viewer: Viewer, timeState: TimeState, layers: LayerState
     pitch: CesiumMath.toDegrees(viewer.camera.pitch),
     roll: CesiumMath.toDegrees(viewer.camera.roll),
     timestamp: timeState.current_timestamp,
-    mode: timeState.mode === "simulate" ? "simulate" : timeState.mode === "replay" || timeState.mode === "paused" ? "replay" : "live",
+    mode: modeOverride ?? (timeState.mode === "simulate" ? "simulate" : timeState.mode === "replay" || timeState.mode === "paused" ? "replay" : "live"),
     enabled_layers: Object.entries(layers)
       .filter(([, enabled]) => enabled)
       .map(([key]) => key),
@@ -200,7 +206,7 @@ function App() {
   const refreshInFlightRef = useRef(false);
 
   const [timeState, setTimeState] = useState<TimeState | null>(null);
-  const [layers] = useState<LayerState>(initialLayers);
+  const [layers, setLayers] = useState<LayerState>(initialLayers);
   const [viewData, setViewData] = useState<ViewQueryResponse | null>(null);
   const [recentEvents, setRecentEvents] = useState<EventRecord[]>([]);
   const [selection, setSelection] = useState<Selection>(null);
@@ -209,6 +215,10 @@ function App() {
   const [socketOnline, setSocketOnline] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const [followSelected, setFollowSelected] = useState(false);
+  const [trajectoryEnabled, setTrajectoryEnabled] = useState(true);
+  const [showMoreInfo, setShowMoreInfo] = useState(false);
+  const [activeTrack, setActiveTrack] = useState<"aircraft" | "maritime" | "satellites" | "alerts" | null>(null);
+  const [effectiveViewMode, setEffectiveViewMode] = useState<"live" | "replay">("live");
   const [statusText, setStatusText] = useState("Connecting to backend");
   const [cameraHeight, setCameraHeight] = useState(19_000_000);
   const [isViewLoading, setIsViewLoading] = useState(true);
@@ -243,7 +253,7 @@ function App() {
 
   const selectedIdentifiers = useMemo(() => identifierRows(selectedEntity, bundle), [bundle, selectedEntity]);
 
-  const timelineEvents = useMemo(() => recentEvents.slice(0, 3), [recentEvents]);
+  const timelineEvents = useMemo(() => (recentEvents.length ? recentEvents.slice(0, 3) : (viewData?.events ?? []).slice(0, 3)), [recentEvents, viewData?.events]);
 
   useEffect(() => {
     api
@@ -264,14 +274,35 @@ function App() {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => {
       if (!viewerRef.current || !timeState || refreshInFlightRef.current) return;
-      const payload = buildViewState(viewerRef.current, timeState, layers, selectedEntity ? [selectedEntity.id] : []);
+      const payload = buildViewState(viewerRef.current, timeState, layers, selectedEntity ? [selectedEntity.id] : [], "live");
       if (!payload) return;
       refreshInFlightRef.current = true;
       setIsViewLoading(true);
       api
         .queryView(payload)
-        .then((response) => {
+        .then(async (response) => {
+          const isEmpty = response.entities.length === 0 && response.events.length === 0 && response.clusters.length === 0;
+          if (isEmpty && timeState.current_timestamp) {
+            const replayPayload = { ...payload, mode: "replay" as const, timestamp: timeState.current_timestamp };
+            try {
+              const replayResponse = await api.queryView(replayPayload);
+              const replayHasData = replayResponse.entities.length > 0 || replayResponse.events.length > 0 || replayResponse.clusters.length > 0;
+              if (replayHasData) {
+                startTransition(() => {
+                  setEffectiveViewMode("replay");
+                  setViewData(replayResponse);
+                  setStatusText(
+                    `No fresh live rows; showing replay snapshot with ${replayResponse.entities.length} tracks and ${replayResponse.events.length} events`
+                  );
+                });
+                return;
+              }
+            } catch {
+              // Keep the live response if replay fallback also fails.
+            }
+          }
           startTransition(() => {
+            setEffectiveViewMode("live");
             setViewData(response);
             setStatusText(
               `${response.entities.length} tracks, ${response.events.length} in-view events, ${response.clusters.length} clusters`
@@ -300,6 +331,7 @@ function App() {
       homeButton: false,
       infoBox: false,
       selectionIndicator: false,
+      scene3DOnly: true,
       terrainProvider: new EllipsoidTerrainProvider(),
       baseLayer: new ImageryLayer(
         new OpenStreetMapImageryProvider({
@@ -317,9 +349,13 @@ function App() {
       viewer.scene.skyAtmosphere.saturationShift = -0.2;
       viewer.scene.skyAtmosphere.brightnessShift = -0.4;
     }
-    viewer.camera.flyTo({
+    viewer.camera.setView({
       destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
-      duration: 0
+      orientation: {
+        heading: 0,
+        pitch: CesiumMath.toRadians(-55),
+        roll: 0
+      }
     });
 
     const handler = new ScreenSpaceEventHandler(viewer.canvas);
@@ -380,11 +416,24 @@ function App() {
   }, [timeState]);
 
   useEffect(() => {
-    if (selection || !viewData?.entities?.length) return;
+    if (selection || !viewData) return;
     const satellite = viewData.entities.find((entity) => entity.entity_kind === "satellite");
-    const fallback = satellite ?? viewData.entities[0];
-    if (fallback) setSelection({ kind: "entity", id: fallback.id });
+    const entityFallback = satellite ?? viewData.entities[0];
+    if (entityFallback) {
+      setSelection({ kind: "entity", id: entityFallback.id });
+      return;
+    }
+    if (viewData.events[0]) {
+      setSelection({ kind: "event", id: viewData.events[0].id });
+    }
   }, [selection, viewData]);
+
+  useEffect(() => {
+    if (!searchValue.trim()) return;
+    const match = filteredEntities[0];
+    if (!match) return;
+    setSelection({ kind: "entity", id: match.id });
+  }, [filteredEntities, searchValue]);
 
   useEffect(() => {
     if (selection?.kind !== "cluster" || !viewData || !viewerRef.current) return;
@@ -527,7 +576,7 @@ function App() {
         });
       }
 
-      if (selection?.id === entity.id && entity.predicted_path.length > 1) {
+      if (trajectoryEnabled && selection?.id === entity.id && entity.predicted_path.length > 1) {
         viewer.entities.add({
           id: `${entity.id}:prediction`,
           polyline: {
@@ -542,7 +591,7 @@ function App() {
       }
     }
 
-    if (selectedEntity && bundle?.timeline?.history?.length) {
+    if (trajectoryEnabled && selectedEntity && bundle?.timeline?.history?.length) {
       viewer.entities.add({
         id: `${selectedEntity.id}:history`,
         polyline: {
@@ -581,17 +630,142 @@ function App() {
     });
   }, [followSelected, selectedEntity]);
 
+  function resetGlobalMap() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
+      orientation: {
+        heading: 0,
+        pitch: CesiumMath.toRadians(-55),
+        roll: 0
+      },
+      duration: 0.8
+    });
+    scheduleRefresh(120);
+  }
+
+  function flyToEntity(entity: EntityRecord | null) {
+    const viewer = viewerRef.current;
+    if (!viewer || !entity) return;
+    const point = pointFromGeometry(entity.geometry);
+    if (!point) return;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(point.lon, point.lat, entity.entity_kind === "satellite" ? 4_200_000 : 1_800_000),
+      duration: 0.8
+    });
+  }
+
+  function flyToEvent(event: EventRecord) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const point = geometryCenter(event.geometry ?? undefined);
+    if (!point) return;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromDegrees(point.lon, point.lat, 3_500_000),
+      duration: 0.8
+    });
+  }
+
+  function cycleLayerPreset() {
+    const allOn = Object.values(layers).every(Boolean);
+    const satelliteFocus = layers.satellites && layers.events && !layers.aircraft && !layers.vessels;
+    if (allOn) {
+      setLayers((current) => ({
+        ...current,
+        aircraft: false,
+        vessels: false,
+        satellites: true,
+        events: true,
+        eonet: true,
+        firms: true,
+        nws: true
+      }));
+      setStatusText("Layer preset: space + events");
+      return;
+    }
+    if (satelliteFocus) {
+      setLayers((current) => ({
+        ...current,
+        aircraft: true,
+        vessels: true,
+        satellites: true,
+        events: true,
+        eonet: true,
+        firms: true,
+        nws: true,
+        aois: true,
+        airspace: true
+      }));
+      setStatusText("Layer preset: all");
+      return;
+    }
+    setLayers((current) => ({
+      ...current,
+      aircraft: true,
+      vessels: true,
+      satellites: false,
+      events: true,
+      eonet: true,
+      firms: true,
+      nws: true
+    }));
+    setStatusText("Layer preset: surface + alerts");
+  }
+
+  function handleTrackClick(track: "aircraft" | "maritime" | "satellites" | "alerts") {
+    setActiveTrack(track);
+    if (track === "aircraft") {
+      setLayers((current) => ({ ...current, aircraft: !current.aircraft }));
+    } else if (track === "maritime") {
+      setLayers((current) => ({ ...current, vessels: !current.vessels }));
+    } else if (track === "satellites") {
+      setLayers((current) => ({ ...current, satellites: !current.satellites }));
+    } else {
+      setLayers((current) => ({ ...current, events: !current.events, eonet: !current.eonet, firms: !current.firms, nws: !current.nws }));
+    }
+  }
+
+  function handleFilterClick(value: string) {
+    setSearchValue(value);
+    const match = (viewData?.entities ?? []).find((entity) => {
+      const haystack = `${entity.label} ${JSON.stringify(entity.properties)}`.toLowerCase();
+      return haystack.includes(value.toLowerCase());
+    });
+    if (match) {
+      setSelection({ kind: "entity", id: match.id });
+      flyToEntity(match);
+    }
+  }
+
+  function handleFilterActionClick(value: string) {
+    handleFilterClick(value);
+    setShowMoreInfo(true);
+  }
+
+  function handleTimelineEventClick(event: EventRecord) {
+    setSelection({ kind: "event", id: event.id });
+    flyToEvent(event);
+    setShowMoreInfo(true);
+  }
+
   return (
     <EagleEyeLayout
       setGlobeRef={(node) => {
         globeRef.current = node;
       }}
       isLive={socketOnline}
-      utcDisplay={formatUtcDateTime(timeState?.current_timestamp)}
+      utcDisplay={`${formatUtcDateTime(timeState?.current_timestamp)}${effectiveViewMode === "replay" ? " · REPLAY" : ""}`}
       searchValue={searchValue}
       onSearchChange={setSearchValue}
+      onLayersClick={cycleLayerPreset}
+      onMapClick={resetGlobalMap}
       trackCounts={trackCounts}
       filterValues={selectedIdentifiers}
+      activeTrack={activeTrack}
+      onTrackClick={handleTrackClick}
+      onFilterClick={handleFilterClick}
+      onFilterActionClick={handleFilterActionClick}
       selectedTitle={selectedLabel(selectedEntity, selectedEvent)}
       selectedEntity={selectedEntity}
       selectedEvent={selectedEvent}
@@ -599,7 +773,12 @@ function App() {
       satelliteFov={satelliteFov}
       followSelected={followSelected}
       onToggleFollow={() => setFollowSelected((value) => !value)}
+      onToggleTrajectory={() => setTrajectoryEnabled((value) => !value)}
+      onMoreInfo={() => setShowMoreInfo((value) => !value)}
+      trajectoryEnabled={trajectoryEnabled}
+      showMoreInfo={showMoreInfo}
       timelineEvents={timelineEvents}
+      onTimelineEventClick={handleTimelineEventClick}
       loading={isViewLoading}
       statusText={statusText}
       passLabel={formatRelativePass(bundle?.timeline?.predicted?.[0]?.observed_at ?? satelliteFov?.timestamp)}
