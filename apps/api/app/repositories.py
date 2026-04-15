@@ -335,10 +335,15 @@ def _map_entity(row: dict[str, Any], entity_kind: str) -> dict[str, Any]:
 
 
 def _query_domain(table: str, entity_kind: str, timestamp: datetime, view: GlobeViewState) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    cluster_only = view.camera_height > 5_000_000 and entity_kind in {"aircraft", "vessel", "satellite"}
+    cluster_only = view.camera_height > 7_500_000 and entity_kind in {"aircraft", "vessel", "satellite"}
     clusters = _cluster_query(table, entity_kind, timestamp, view) if cluster_only else []
-    limit = 600 if view.camera_height < 2_000_000 else 250 if not cluster_only else 60
-    entities = [] if cluster_only else [_map_entity(row, entity_kind) for row in _entity_rows(table, entity_kind, timestamp, view, limit=limit)]
+    limit = 600 if view.camera_height < 2_000_000 else 250 if not cluster_only else 90
+    should_render_entities = (not cluster_only) or not clusters
+    entities = (
+        [_map_entity(row, entity_kind) for row in _entity_rows(table, entity_kind, timestamp, view, limit=limit)]
+        if should_render_entities
+        else []
+    )
     return entities, [
         {
             "id": row["id"],

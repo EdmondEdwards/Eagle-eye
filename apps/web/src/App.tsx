@@ -79,6 +79,18 @@ function fallbackViewBounds(viewer: Viewer): Pick<GlobeViewState, "west" | "sout
   };
 }
 
+function cameraHeightToZoomValue(height: number): number {
+  const clamped = Math.max(250000, Math.min(19000000, height));
+  const normalized = (Math.log(clamped) - Math.log(250000)) / (Math.log(19000000) - Math.log(250000));
+  return Math.round((1 - normalized) * 100);
+}
+
+function zoomValueToCameraHeight(value: number): number {
+  const normalized = 1 - value / 100;
+  const exponent = Math.log(250000) + normalized * (Math.log(19000000) - Math.log(250000));
+  return Math.round(Math.exp(exponent));
+}
+
 function viewModeFromTime(mode: TimeState["mode"]): GlobeViewState["mode"] {
   if (mode === "simulate") return "simulate";
   if (mode === "replay" || mode === "paused") return "replay";
@@ -703,6 +715,23 @@ function App() {
     scheduleRefresh(180);
   }
 
+  function setZoomFromSlider(value: number) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const camera = viewer.camera.positionCartographic;
+    viewer.camera.flyTo({
+      destination: Cartesian3.fromRadians(camera.longitude, camera.latitude, zoomValueToCameraHeight(value)),
+      orientation: {
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch,
+        roll: viewer.camera.roll
+      },
+      duration: 0.22
+    });
+    viewer.scene.requestRender();
+    scheduleRefresh(120);
+  }
+
   async function saveWorkspace() {
     if (!viewerRef.current || !timeState) return;
     const name = window.prompt("Workspace name", `Workspace ${new Date().toLocaleTimeString()}`);
@@ -841,6 +870,14 @@ function App() {
   return (
     <div className="app-shell">
       <aside className={`panel left-panel ${leftPanelCollapsed ? "collapsed" : ""}`}>
+        {leftPanelCollapsed ? (
+          <div className="collapsed-toggle-wrap">
+            <button className="collapse-toggle solo" onClick={() => setLeftPanelCollapsed(false)}>
+              ▸
+            </button>
+          </div>
+        ) : (
+          <>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Eagle Eye</p>
@@ -848,14 +885,12 @@ function App() {
           </div>
           <div className="panel-header-actions">
             <span className={`pill ${socketOnline ? "online" : ""}`}>{socketOnline ? "Live bus" : "Offline"}</span>
-            <button className="collapse-toggle" onClick={() => setLeftPanelCollapsed((value) => !value)}>
-              {leftPanelCollapsed ? ">" : "<"}
+            <button className="collapse-toggle" onClick={() => setLeftPanelCollapsed(true)}>
+              ◂
             </button>
           </div>
         </div>
 
-        {!leftPanelCollapsed ? (
-          <>
         <section className="card">
           <h2>Sources</h2>
           <p className="muted">Database-first viewport rendering. Globe only requests what the camera can see.</p>
@@ -957,12 +992,6 @@ function App() {
           </div>
         </section>
           </>
-        ) : (
-          <div className="collapsed-rail">
-            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Sources</button>
-            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Layers</button>
-            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Intel</button>
-          </div>
         )}
       </aside>
 
@@ -1009,20 +1038,31 @@ function App() {
         ) : null}
         <div className="camera-dock">
           <button className="camera-btn wide" onClick={resetCamera}>Home</button>
-          <div className="camera-grid">
-            <button className="camera-btn" onClick={() => tiltCamera("up")}>Tilt+</button>
-            <button className="camera-btn" onClick={() => moveCamera("up")}>Pan↑</button>
-            <button className="camera-btn" onClick={() => zoomCamera("in")}>Zoom+</button>
-            <button className="camera-btn" onClick={() => rotateCamera("left")}>Rot←</button>
-            <button className="camera-btn" onClick={() => resetCamera()}>•</button>
-            <button className="camera-btn" onClick={() => rotateCamera("right")}>Rot→</button>
-            <button className="camera-btn" onClick={() => moveCamera("left")}>Pan←</button>
-            <button className="camera-btn" onClick={() => moveCamera("down")}>Pan↓</button>
-            <button className="camera-btn" onClick={() => moveCamera("right")}>Pan→</button>
+          <div className="camera-wheel">
+            <button className="camera-btn north" onClick={() => moveCamera("up")}>↑</button>
+            <button className="camera-btn west" onClick={() => moveCamera("left")}>←</button>
+            <button className="camera-btn center" onClick={resetCamera}>Pan</button>
+            <button className="camera-btn east" onClick={() => moveCamera("right")}>→</button>
+            <button className="camera-btn south" onClick={() => moveCamera("down")}>↓</button>
           </div>
-          <div className="camera-row">
-            <button className="camera-btn" onClick={() => tiltCamera("down")}>Tilt-</button>
-            <button className="camera-btn" onClick={() => zoomCamera("out")}>Zoom-</button>
+          <div className="camera-wheel orbit">
+            <button className="camera-btn north" onClick={() => tiltCamera("up")}>T+</button>
+            <button className="camera-btn west" onClick={() => rotateCamera("left")}>⟲</button>
+            <button className="camera-btn center" onClick={() => setFollowSelected((value) => !value)}>
+              {followSelected ? "Lock" : "Free"}
+            </button>
+            <button className="camera-btn east" onClick={() => rotateCamera("right")}>⟳</button>
+            <button className="camera-btn south" onClick={() => tiltCamera("down")}>T-</button>
+          </div>
+          <div className="zoom-slider">
+            <span className="eyebrow">Zoom</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={cameraHeightToZoomValue(cameraHeight)}
+              onChange={(event) => setZoomFromSlider(Number(event.target.value))}
+            />
           </div>
         </div>
         <div className="floating-actions">
@@ -1037,6 +1077,14 @@ function App() {
       </main>
 
       <aside className={`panel right-panel ${rightPanelCollapsed ? "collapsed" : ""}`}>
+        {rightPanelCollapsed ? (
+          <div className="collapsed-toggle-wrap right">
+            <button className="collapse-toggle solo" onClick={() => setRightPanelCollapsed(false)}>
+              ◂
+            </button>
+          </div>
+        ) : (
+          <>
         <section className="card">
           <div className="section-row">
             <div className="tab-row">
@@ -1050,14 +1098,12 @@ function App() {
               </button>
             ))}
             </div>
-            <button className="collapse-toggle" onClick={() => setRightPanelCollapsed((value) => !value)}>
-              {rightPanelCollapsed ? "<" : ">"}
+            <button className="collapse-toggle" onClick={() => setRightPanelCollapsed(true)}>
+              ▸
             </button>
           </div>
         </section>
 
-        {!rightPanelCollapsed ? (
-          <>
         {activeRightTab === "selection" ? (
         <section className="card">
           <div className="section-row">
@@ -1221,11 +1267,6 @@ function App() {
           </div>
         </section>
           </>
-        ) : (
-          <div className="collapsed-rail right">
-            <button className="rail-chip" onClick={() => setRightPanelCollapsed(false)}>Select</button>
-            <button className="rail-chip" onClick={() => setRightPanelCollapsed(false)}>Events</button>
-          </div>
         )}
       </aside>
 

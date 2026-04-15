@@ -78,8 +78,8 @@ select {
 
 .left-panel.collapsed,
 .right-panel.collapsed {
-  width: 88px;
-  padding: 12px;
+  width: 58px;
+  padding: 8px;
 }
 
 .globe-stage {
@@ -231,18 +231,6 @@ select {
   backdrop-filter: blur(12px);
 }
 
-.camera-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 56px);
-  gap: 8px;
-}
-
-.camera-row {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
-}
-
 .camera-btn {
   min-height: 42px;
   border-radius: 12px;
@@ -251,6 +239,80 @@ select {
 
 .camera-btn.wide {
   width: 100%;
+}
+
+.camera-wheel {
+  position: relative;
+  width: 156px;
+  height: 156px;
+  border-radius: 50%;
+  background: radial-gradient(circle at center, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.camera-wheel .camera-btn {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  min-height: 52px;
+  border-radius: 50%;
+}
+
+.camera-wheel .camera-btn.center {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.camera-wheel .camera-btn.north {
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+}
+
+.camera-wheel .camera-btn.south {
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+}
+
+.camera-wheel .camera-btn.west {
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.camera-wheel .camera-btn.east {
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.camera-wheel.orbit {
+  width: 132px;
+  height: 132px;
+  align-self: center;
+}
+
+.camera-wheel.orbit .camera-btn {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+.zoom-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.zoom-slider input[type="range"] {
+  writing-mode: bt-lr;
+  -webkit-appearance: slider-vertical;
+  width: 28px;
+  height: 160px;
+  padding: 0;
 }
 
 .card {
@@ -282,18 +344,21 @@ select {
   min-width: 42px;
 }
 
-.collapsed-rail {
+.collapsed-toggle-wrap {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
 }
 
-.rail-chip {
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  min-height: 84px;
-  padding: 10px 8px;
+.collapsed-toggle-wrap.right {
+  justify-content: center;
+}
+
+.collapse-toggle.solo {
+  min-width: 38px;
+  min-height: 72px;
+  border-radius: 999px;
 }
 
 .timeline-bar {
