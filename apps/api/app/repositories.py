@@ -35,7 +35,7 @@ from .schemas import (
 )
 
 LOGGER = logging.getLogger(__name__)
-LIVE_TRACK_STALE_MINUTES = 5
+LIVE_TRACK_STALE_MINUTES = 10
 
 
 def _utc(value: datetime | None = None) -> datetime:
