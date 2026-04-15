@@ -11,41 +11,52 @@ function SectionTitle({ title }: { title: string }) {
   );
 }
 
-export function TrackSidebar() {
+type TrackSidebarProps = {
+  trackCounts: {
+    aircraft: number;
+    maritime: number;
+    satellites: number;
+    alerts: number;
+  };
+  filterValues: string[];
+};
+
+export function TrackSidebar({ trackCounts, filterValues }: TrackSidebarProps) {
+  const resolvedFilters = filterValues.length ? filterValues : ["AE1234", "543210987", "55012"];
+
   return (
     <aside className="panel-surface h-full w-[300px] p-3">
       <div className="flex h-full flex-col gap-4">
         <section className="flex flex-col gap-3">
           <SectionTitle title="TRACKS" />
           <div className="flex flex-col gap-2">
-            <TrackRow icon={<AircraftIcon className="h-full w-full" />} label="Aircraft" count="1,256" accent="#58C7FF" />
-            <TrackRow icon={<ShipIcon className="h-full w-full" />} label="Maritime" count="342" accent="#6EFF97" />
-            <TrackRow icon={<SatelliteIcon className="h-full w-full" />} label="Satellites" count="32" accent="#FFAA4D" />
-            <TrackRow icon={<AlertIcon className="h-full w-full" />} label="Alerts" count="5" accent="#FF5C5C" />
+            <TrackRow icon={<AircraftIcon className="h-full w-full" />} label="Aircraft" count={trackCounts.aircraft.toLocaleString()} accent="#58C7FF" />
+            <TrackRow icon={<ShipIcon className="h-full w-full" />} label="Maritime" count={trackCounts.maritime.toLocaleString()} accent="#6EFF97" />
+            <TrackRow icon={<SatelliteIcon className="h-full w-full" />} label="Satellites" count={trackCounts.satellites.toLocaleString()} accent="#FFAA4D" />
+            <TrackRow icon={<AlertIcon className="h-full w-full" />} label="Alerts" count={trackCounts.alerts.toLocaleString()} accent="#FF5C5C" />
           </div>
         </section>
 
         <section className="flex flex-col gap-3">
           <SectionTitle title="FILTER" />
           <div className="flex flex-col gap-2">
-            <FilterRow
-              icon={<AircraftIcon className="h-4 w-4" />}
-              value="AE1234"
-              actionIcon={<CheckIcon className="h-3.5 w-3.5 text-[#6EFF97]" />}
-              accent="#6EFF97"
-            />
-            <FilterRow
-              icon={<CrosshairIcon className="h-4 w-4" />}
-              value="543210987"
-              actionIcon={<PlusIcon className="h-3.5 w-3.5" />}
-              accent="#8fd4ff"
-            />
-            <FilterRow
-              icon={<SatelliteIcon className="h-4 w-4" />}
-              value="55012"
-              actionIcon={<PlusIcon className="h-3.5 w-3.5" />}
-              accent="#8fd4ff"
-            />
+            {resolvedFilters.slice(0, 3).map((value, index) => (
+              <FilterRow
+                key={value}
+                icon={
+                  index === 0 ? (
+                    <AircraftIcon className="h-4 w-4" />
+                  ) : index === 1 ? (
+                    <CrosshairIcon className="h-4 w-4" />
+                  ) : (
+                    <SatelliteIcon className="h-4 w-4" />
+                  )
+                }
+                value={value}
+                actionIcon={index === 0 ? <CheckIcon className="h-3.5 w-3.5 text-[#6EFF97]" /> : <PlusIcon className="h-3.5 w-3.5" />}
+                accent={index === 0 ? "#6EFF97" : "#8fd4ff"}
+              />
+            ))}
           </div>
         </section>
 

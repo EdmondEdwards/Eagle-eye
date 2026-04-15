@@ -1,7 +1,30 @@
+import type { EventRecord } from "@eagle-eye/shared-types";
 import { DistressIcon, LaunchIcon, StormIcon } from "./icons";
 import { TimelineEventRow } from "./TimelineEventRow";
 
-export function TimelinePanel() {
+type TimelinePanelProps = {
+  timelineEvents: EventRecord[];
+};
+
+function eventMeta(event: EventRecord) {
+  const title = event.title;
+  const location =
+    typeof event.properties?.location === "string"
+      ? event.properties.location
+      : typeof event.properties?.place === "string"
+        ? event.properties.place
+        : event.source;
+
+  if (event.category.toLowerCase().includes("storm")) {
+    return { icon: <StormIcon className="h-4 w-4" />, color: "#58C7FF", title, location };
+  }
+  if (event.category.toLowerCase().includes("launch") || event.title.toLowerCase().includes("launch")) {
+    return { icon: <LaunchIcon className="h-4 w-4" />, color: "#FFAA4D", title, location };
+  }
+  return { icon: <DistressIcon className="h-4 w-4" />, color: "#FF7D4D", title, location };
+}
+
+export function TimelinePanel({ timelineEvents }: TimelinePanelProps) {
   return (
     <section className="panel-surface h-[190px] p-3">
       <div className="flex h-full flex-col gap-3">
@@ -32,27 +55,19 @@ export function TimelinePanel() {
           </div>
 
           <div className="overflow-hidden rounded-[8px] border border-white/8 bg-white/[0.015]">
-            <TimelineEventRow
-              icon={<LaunchIcon className="h-4 w-4" />}
-              color="#FFAA4D"
-              time="14:25"
-              title="Rocket Launch"
-              location="Falcon 9 · Cape Canaveral"
-            />
-            <TimelineEventRow
-              icon={<StormIcon className="h-4 w-4" />}
-              color="#58C7FF"
-              time="13:50"
-              title="Tropical Storm"
-              location="Pacific Ocean"
-            />
-            <TimelineEventRow
-              icon={<DistressIcon className="h-4 w-4" />}
-              color="#FF7D4D"
-              time="13:15"
-              title="Vessel SOS"
-              location="North Atlantic"
-            />
+            {timelineEvents.map((event) => {
+              const meta = eventMeta(event);
+              return (
+                <TimelineEventRow
+                  key={event.id}
+                  icon={meta.icon}
+                  color={meta.color}
+                  time={new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(new Date(event.start_time))}
+                  title={meta.title}
+                  location={meta.location}
+                />
+              );
+            })}
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 type ActionButton = {
   label: string;
   primary?: boolean;
+  onClick?: () => void;
 };
 
 export function ActionButtonRow({ buttons }: { buttons: ActionButton[] }) {
@@ -9,6 +10,7 @@ export function ActionButtonRow({ buttons }: { buttons: ActionButton[] }) {
       {buttons.map((button) => (
         <button
           key={button.label}
+          onClick={button.onClick}
           className={
             button.primary
               ? "flex-1 rounded-[6px] border border-[#9fdcc2]/20 bg-[linear-gradient(180deg,rgba(132,174,151,0.28),rgba(73,100,91,0.28))] px-3 py-2 text-[13px] font-medium text-[#EAF4FF] shadow-[inset_0_0_14px_rgba(110,255,151,0.08)] transition hover:bg-[linear-gradient(180deg,rgba(132,174,151,0.35),rgba(73,100,91,0.35))]"

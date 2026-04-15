@@ -17,7 +17,14 @@ function HeaderSelect({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-export function TopHeader() {
+type TopHeaderProps = {
+  isLive: boolean;
+  utcDisplay: string;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+};
+
+export function TopHeader({ isLive, utcDisplay, searchValue, onSearchChange }: TopHeaderProps) {
   return (
     <header className="panel-surface flex h-[72px] items-center justify-between px-5">
       <div className="flex items-center gap-4">
@@ -33,14 +40,15 @@ export function TopHeader() {
       </div>
 
       <div className="flex items-center gap-[14px]">
-        <div className="flex h-10 items-center gap-2 rounded-full border border-[#6EFF97]/20 bg-[#6EFF97]/[0.08] px-4 text-[12px] font-medium tracking-[0.18em] text-[#b8ffd0]">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#6EFF97] shadow-[0_0_10px_rgba(110,255,151,0.5)]" />
+        <div className={`flex h-10 items-center gap-2 rounded-full border px-4 text-[12px] font-medium tracking-[0.18em] ${
+          isLive
+            ? "border-[#6EFF97]/20 bg-[#6EFF97]/[0.08] text-[#b8ffd0]"
+            : "border-[#ff8d8d]/20 bg-[#FF5C5C]/[0.08] text-[#ffd7d7]"
+        }`}>
+          <span className={`h-2.5 w-2.5 rounded-full ${isLive ? "bg-[#6EFF97] shadow-[0_0_10px_rgba(110,255,151,0.5)]" : "bg-[#FF5C5C]"}`} />
           <span>LIVE</span>
         </div>
-        <div className="text-[13px] text-[#a7b8ca]">
-          <span className="text-[#eaf4ff]">2024-06-15</span>
-          <span className="ml-2 text-[#7f92a7]">14:32 UTC</span>
-        </div>
+        <div className="text-[13px] text-[#a7b8ca]">{utcDisplay}</div>
         <HeaderSelect icon={<LayersIcon className="h-4 w-4" />} label="Layers" />
         <HeaderSelect icon={<GlobeIcon className="h-4 w-4" />} label="Map" />
       </div>
@@ -49,6 +57,8 @@ export function TopHeader() {
         <label className="flex h-10 min-w-[220px] items-center gap-2 rounded-[6px] border border-white/10 bg-[#08111b]/85 px-3 text-[#93A8BD] shadow-[inset_0_0_18px_rgba(88,199,255,0.05)]">
           <SearchIcon className="h-4 w-4 text-[#7c93a7]" />
           <input
+            value={searchValue}
+            onChange={(event) => onSearchChange(event.target.value)}
             className="w-full bg-transparent text-[13px] text-[#EAF4FF] outline-none placeholder:text-[#6c8094]"
             placeholder="Search..."
           />
