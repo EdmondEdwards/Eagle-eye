@@ -2,10 +2,13 @@ import {
   Cartesian2,
   Cartesian3,
   Color,
+  EllipsoidTerrainProvider,
+  ImageryLayer,
   Ion,
   JulianDate,
   LabelStyle,
   Math as CesiumMath,
+  OpenStreetMapImageryProvider,
   PolylineDashMaterialProperty,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
@@ -281,7 +284,8 @@ function App() {
 
   useEffect(() => {
     if (!globeRef.current || viewerRef.current) return;
-    Ion.defaultAccessToken = import.meta.env.CESIUM_ION_TOKEN ?? "";
+    const ionToken = import.meta.env.VITE_CESIUM_ION_TOKEN ?? import.meta.env.CESIUM_ION_TOKEN ?? "";
+    Ion.defaultAccessToken = ionToken;
     const viewer = new Viewer(globeRef.current, {
       animation: false,
       baseLayerPicker: false,
@@ -291,9 +295,18 @@ function App() {
       navigationHelpButton: false,
       homeButton: false,
       infoBox: false,
-      selectionIndicator: false
+      selectionIndicator: false,
+      terrainProvider: new EllipsoidTerrainProvider(),
+      baseLayer: new ImageryLayer(
+        new OpenStreetMapImageryProvider({
+          url: "https://tile.openstreetmap.org/"
+        })
+      ),
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity
     });
     viewer.scene.globe.depthTestAgainstTerrain = false;
+    viewer.scene.requestRender();
     viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(-20, 24, 19_000_000)
     });
@@ -509,6 +522,7 @@ function App() {
         });
       }
     }
+    viewer.scene.requestRender();
   }, [filteredEntities, followSelected, selectedEntity, selectedSatelliteFov, selection, viewData]);
 
   useEffect(() => {
