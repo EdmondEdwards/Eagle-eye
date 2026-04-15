@@ -312,9 +312,11 @@ function App() {
 
     viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.scene.globe.baseColor = Color.fromCssColorString("#040911");
-    viewer.scene.skyAtmosphere.hueShift = 0.1;
-    viewer.scene.skyAtmosphere.saturationShift = -0.2;
-    viewer.scene.skyAtmosphere.brightnessShift = -0.4;
+    if (viewer.scene.skyAtmosphere) {
+      viewer.scene.skyAtmosphere.hueShift = 0.1;
+      viewer.scene.skyAtmosphere.saturationShift = -0.2;
+      viewer.scene.skyAtmosphere.brightnessShift = -0.4;
+    }
     viewer.camera.flyTo({
       destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
       duration: 0
