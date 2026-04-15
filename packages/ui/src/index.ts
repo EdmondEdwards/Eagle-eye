@@ -1,5 +1,5 @@
 export type LayerDefinition = {
-  key: "aircraft" | "vessels" | "satellites" | "airspace" | "events" | "aois";
+  key: "aircraft" | "vessels" | "satellites" | "airspace" | "events" | "aois" | "eonet" | "firms" | "nws";
   label: string;
   color: string;
   disabled?: boolean;
@@ -11,7 +11,10 @@ export const layerDefinitions: readonly LayerDefinition[] = [
   { key: "satellites", label: "Satellites", color: "#9af6b0" },
   { key: "airspace", label: "Airspace / TFR", color: "#ff9b3d" },
   { key: "events", label: "Events", color: "#ff6b6b" },
-  { key: "aois", label: "AOIs", color: "#f8e16c" }
+  { key: "aois", label: "AOIs", color: "#f8e16c" },
+  { key: "eonet", label: "EONET Events", color: "#ff8a3d" },
+  { key: "firms", label: "FIRMS Fires", color: "#ff5d33" },
+  { key: "nws", label: "NWS Alerts", color: "#57a8ff" }
 ];
 
 export const detailTabs = ["details", "events", "relationships", "notes"] as const;

@@ -6,6 +6,9 @@ import type {
   EntityTimelineResponse,
   EventRecord,
   GlobeViewState,
+  HazardEventDetail,
+  HazardViewQuery,
+  HazardViewResponse,
   InvestigationBundle,
   LiveEnvelope,
   NoteRecord,
@@ -78,6 +81,11 @@ export const api = {
   queryView: (payload: GlobeViewState) =>
     requestJson<ViewQueryResponse>("/api/view/query", { method: "POST", body: JSON.stringify(payload) }),
   getEvents: () => requestJson<EventRecord[]>("/api/events/live"),
+  queryHazards: (payload: HazardViewQuery) =>
+    requestJson<HazardViewResponse>("/api/hazards/view-query", { method: "POST", body: JSON.stringify(payload) }),
+  getHazardEventDetail: (eventId: string) => requestJson<HazardEventDetail>(`/api/hazards/events/${encodeURIComponent(eventId)}`),
+  getHazardCategories: () => requestJson<Array<Record<string, unknown>>>("/api/hazards/categories"),
+  getHazardSourceHealth: () => requestJson<SourceStatusRecord[]>("/api/hazards/source-health"),
   getRelationships: (selectedIds?: string[]) =>
     requestJson<RelationshipRecord[]>(
       `/api/relationships${selectedIds?.length ? `?selected_ids=${encodeURIComponent(selectedIds.join(","))}` : ""}`
@@ -121,6 +129,8 @@ export const api = {
   getTags: () => requestJson<TagRecord[]>("/api/tags"),
   createTag: (payload: Partial<TagRecord>) =>
     requestJson<TagRecord>("/api/tags", { method: "POST", body: JSON.stringify(payload) }),
+  assignTag: (payload: Record<string, unknown>) =>
+    requestJson<TagRecord>("/api/tags/assign", { method: "POST", body: JSON.stringify(payload) }),
   getAois: () => requestJson<AoiRecord[]>("/api/aois"),
   createAoi: (payload: Record<string, unknown>) =>
     requestJson<AoiRecord>("/api/aois", { method: "POST", body: JSON.stringify(payload) }),

@@ -31,6 +31,13 @@
 - History retention for replay
 - FOV footprint and pass calculations
 
+### Hazards
+
+- EONET natural-event ingestion with source-native geometry history
+- FIRMS thermal detections stored raw, then optionally clustered into view-friendly fire events
+- NWS public weather alerts stored natively and normalized into the event system
+- Hazard-native tables plus `hazard_events_normalized` for cross-source querying
+
 ## Global Time Engine
 
 `time_state` stores the active mode, status, current timestamp, speed, and step size.
@@ -63,6 +70,7 @@ Output:
 - concrete entities for high-detail views
 - clusters for zoomed-out views
 - current events
+- current hazard events from EONET, FIRMS, and NWS when those layers are enabled
 - relevant relationships
 - stats
 
@@ -99,3 +107,9 @@ Docker Compose runs all services locally:
 - `web`
 
 The system is designed for single-node local operation with no auth and no external dependency required beyond the data providers you choose to enable.
+
+## Hazard Query Model
+
+- `POST /api/hazards/view-query` returns normalized hazard rows intersecting the viewport and time window.
+- `GET /api/hazards/eonet`, `/api/hazards/firms`, and `/api/hazards/nws` expose source-native records for drill-in and debugging.
+- The frontend keeps no global hazard cache; hazard rendering remains viewport-scoped and time-aware.

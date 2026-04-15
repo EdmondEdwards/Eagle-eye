@@ -6,6 +6,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 
 from . import repositories as repo
+from .services.eonet_view_service import query_eonet_events
+from .services.firms_view_service import query_firms_records
+from .services.nws_view_service import query_nws_alerts
 from .schemas import (
     AoiCreate,
     AoiRecord,
@@ -14,6 +17,9 @@ from .schemas import (
     CaseRecord,
     CaseUpdate,
     EventRecord,
+    HazardEventDetail,
+    HazardViewQuery,
+    HazardViewResponse,
     EntityTimelineResponse,
     GlobeViewState,
     InvestigationBundle,
@@ -25,9 +31,11 @@ from .schemas import (
     SatellitePassResponse,
     SourceStatusRecord,
     TagCreate,
+    TagAssignmentCreate,
     TagRecord,
     TimeState,
     TimeStateUpdate,
+    ViewDiagnosticsResponse,
     ViewQueryResponse,
     WatchlistCreate,
     WatchlistEntityCreate,
@@ -39,6 +47,18 @@ from .schemas import (
 )
 
 router = APIRouter()
+
+
+def _csv_list(value: str | None) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()] if value else []
+
+
+def _view_mode(mode: str) -> str:
+    if mode == "simulate":
+        return "simulate"
+    if mode in {"replay", "paused"}:
+        return "replay"
+    return "live"
 
 
 @router.get("/health")
@@ -59,6 +79,11 @@ def set_time_state(payload: TimeStateUpdate) -> dict:
 @router.post("/api/view/query", response_model=ViewQueryResponse)
 def query_view(payload: GlobeViewState) -> dict:
     return repo.query_view(payload)
+
+
+@router.post("/api/view/diagnostics", response_model=ViewDiagnosticsResponse)
+def diagnose_view(payload: GlobeViewState) -> dict:
+    return repo.diagnose_view(payload)
 
 
 @router.get("/api/view/entities")
@@ -146,10 +171,153 @@ def list_live_events(limit: int = Query(default=50, le=200)) -> list[dict]:
         north=85,
         camera_height=36_000_000,
         timestamp=state["current_timestamp"],
-        mode=state["mode"],
-        enabled_layers=["events"],
+        mode=_view_mode(state["mode"]),
+        enabled_layers=["events", "eonet", "firms", "nws"],
     )
-    return repo.list_events(view=view, limit=limit)
+    rows = repo.list_events(view=view, limit=limit)
+    rows.extend(repo.list_hazard_events(view=view, limit=limit))
+    return sorted(rows, key=lambda row: row["start_time"], reverse=True)[:limit]
+
+
+@router.post("/api/hazards/view-query", response_model=HazardViewResponse)
+def hazards_view_query(payload: HazardViewQuery) -> dict:
+    events = repo.list_hazard_events(
+        bbox=(payload.west, payload.south, payload.east, payload.north),
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        sources=payload.sources,
+        categories=payload.categories,
+        statuses=payload.statuses,
+        severities=payload.severities,
+        limit=payload.limit,
+    )
+    return {
+        "events": events,
+        "stats": {
+            "events": len(events),
+            "sources": len({row["source"] for row in events}),
+        },
+    }
+
+
+@router.get("/api/hazards/events", response_model=list[EventRecord])
+def list_hazard_events(
+    west: float | None = None,
+    south: float | None = None,
+    east: float | None = None,
+    north: float | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    source: str | None = None,
+    category: str | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    limit: int = Query(default=200, le=500),
+) -> list[dict]:
+    bbox = (west, south, east, north) if None not in {west, south, east, north} else None
+    return repo.list_hazard_events(
+        bbox=bbox if bbox is not None else None,
+        start_time=start_time,
+        end_time=end_time,
+        sources=_csv_list(source),
+        categories=_csv_list(category),
+        statuses=_csv_list(status),
+        severities=_csv_list(severity),
+        limit=limit,
+    )
+
+
+@router.get("/api/hazards/events/{event_id}", response_model=HazardEventDetail)
+def hazard_event_detail(event_id: UUID) -> dict:
+    row = repo.get_hazard_event_detail(event_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Hazard event not found")
+    return row
+
+
+@router.get("/api/hazards/eonet")
+def list_eonet_events(
+    west: float | None = None,
+    south: float | None = None,
+    east: float | None = None,
+    north: float | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    status: str | None = None,
+    category: str | None = None,
+    source: str | None = None,
+    limit: int = Query(default=200, le=500),
+) -> list[dict]:
+    bbox = (west, south, east, north) if None not in {west, south, east, north} else None
+    simplify = 0.5 if bbox is None else max((bbox[2] - bbox[0]) / 1800.0, 0.0)
+    return query_eonet_events(
+        bbox=bbox if bbox is not None else None,
+        start_time=start,
+        end_time=end,
+        statuses=_csv_list(status),
+        categories=_csv_list(category),
+        sources=_csv_list(source),
+        limit=limit,
+        simplify_tolerance=simplify,
+    )
+
+
+@router.get("/api/hazards/firms")
+def list_firms_detections(
+    west: float | None = None,
+    south: float | None = None,
+    east: float | None = None,
+    north: float | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    sensor: str | None = None,
+    clustered: bool = Query(default=False),
+    limit: int = Query(default=400, le=2000),
+) -> list[dict]:
+    bbox = (west, south, east, north) if None not in {west, south, east, north} else None
+    return query_firms_records(
+        bbox=bbox if bbox is not None else None,
+        start_time=start,
+        end_time=end,
+        sensors=_csv_list(sensor),
+        clustered=clustered,
+        limit=limit,
+    )
+
+
+@router.get("/api/hazards/nws")
+def list_nws_alerts(
+    west: float | None = None,
+    south: float | None = None,
+    east: float | None = None,
+    north: float | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    limit: int = Query(default=200, le=500),
+) -> list[dict]:
+    bbox = (west, south, east, north) if None not in {west, south, east, north} else None
+    simplify = 0.75 if bbox is None else max((bbox[2] - bbox[0]) / 1200.0, 0.0)
+    return query_nws_alerts(
+        bbox=bbox if bbox is not None else None,
+        start_time=start,
+        end_time=end,
+        statuses=_csv_list(status),
+        severities=_csv_list(severity),
+        limit=limit,
+        simplify_tolerance=simplify,
+    )
+
+
+@router.get("/api/hazards/categories")
+def hazard_categories() -> list[dict]:
+    return repo.list_hazard_categories()
+
+
+@router.get("/api/hazards/source-health", response_model=list[SourceStatusRecord])
+def hazard_source_health() -> list[dict]:
+    return [row for row in repo.list_source_status() if row["domain"] == "hazard"]
 
 
 @router.get("/api/relationships", response_model=list[RelationshipRecord])
@@ -271,6 +439,11 @@ def list_tags() -> list[dict]:
 @router.post("/api/tags", response_model=TagRecord)
 def create_tag(payload: TagCreate) -> dict:
     return repo.create_tag(payload)
+
+
+@router.post("/api/tags/assign", response_model=TagRecord)
+def assign_tag(payload: TagAssignmentCreate) -> dict:
+    return repo.assign_tag(payload)
 
 
 @router.get("/api/aois", response_model=list[AoiRecord])

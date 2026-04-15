@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     enable_gfw: bool = False
     gfw_api_token: str | None = None
     gfw_poll_interval_seconds: int = 3600
+    enable_eonet: bool = True
+    eonet_default_status: str = "open"
+    eonet_default_days: int = 30
+    eonet_poll_interval_seconds: int = 900
+    eonet_use_geojson: bool = True
+    enable_firms: bool = True
+    firms_map_key: str | None = None
+    firms_poll_interval_seconds: int = 300
+    firms_default_lookback_days: int = 2
+    firms_enable_clustering: bool = True
+    enable_nws: bool = True
+    nws_poll_interval_seconds: int = 300
+    nws_alerts_only: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

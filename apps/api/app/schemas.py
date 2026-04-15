@@ -26,7 +26,7 @@ class GlobeViewState(BaseModel):
     @classmethod
     def _default_layers(cls, value: Any) -> list[str]:
         if not value:
-            return ["aircraft", "vessels", "satellites", "airspace", "events", "aois"]
+            return ["aircraft", "vessels", "satellites", "airspace", "events", "aois", "eonet", "firms", "nws"]
         return list(value)
 
 
@@ -69,6 +69,9 @@ class EventRecord(BaseModel):
     source: str
     source_confidence: float
     raw_reference: str | None = None
+    source_record_id: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class RelationshipRecord(BaseModel):
@@ -94,6 +97,26 @@ class ViewQueryResponse(BaseModel):
     events: list[EventRecord]
     relationships: list[RelationshipRecord]
     stats: dict[str, int]
+
+
+class ViewDiagnosticsLayer(BaseModel):
+    key: str
+    table: str
+    table_exists: bool
+    cluster_only: bool
+    total_rows: int = 0
+    fresh_rows: int = 0
+    bbox_rows: int = 0
+    query_entities: int = 0
+    query_clusters: int = 0
+
+
+class ViewDiagnosticsResponse(BaseModel):
+    view: GlobeViewState
+    effective_timestamp: datetime
+    live_track_stale_minutes: int
+    layers: list[ViewDiagnosticsLayer] = Field(default_factory=list)
+    stats: dict[str, int] = Field(default_factory=dict)
 
 
 class TimeState(BaseModel):
@@ -293,6 +316,13 @@ class TagCreate(BaseModel):
     source: str = "user"
 
 
+class TagAssignmentCreate(BaseModel):
+    tag_name: str
+    entity_kind: str | None = None
+    entity_id: str | None = None
+    case_id: UUID | None = None
+
+
 class AoiUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
@@ -352,3 +382,32 @@ class InvestigationBundle(BaseModel):
     timeline: EntityTimelineResponse | None = None
     aoi_events: list[EventRecord] = Field(default_factory=list)
     aoi_passes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class HazardViewQuery(BaseModel):
+    west: float
+    south: float
+    east: float
+    north: float
+    camera_height: float = 0
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    sources: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    statuses: list[str] = Field(default_factory=list)
+    severities: list[str] = Field(default_factory=list)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class HazardViewResponse(BaseModel):
+    events: list[EventRecord] = Field(default_factory=list)
+    stats: dict[str, int] = Field(default_factory=dict)
+
+
+class HazardEventDetail(BaseModel):
+    event: EventRecord
+    source_payload: dict[str, Any] = Field(default_factory=dict)
+    linked_cases: list[CaseRecord] = Field(default_factory=list)
+    linked_aois: list[AoiRecord] = Field(default_factory=list)
+    nearby: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    links: list[str] = Field(default_factory=list)

@@ -28,6 +28,12 @@ from source_adapters.satellite_provider import SatelliteProvider
 from source_adapters.spacetrack_adapter import SpaceTrackSatelliteAdapter
 from .events import event_loop
 from .maritime import MARITIME_DDL, maritime_loop
+from .providers.eonet_adapter import EONETAdapter
+from .providers.firms_adapter import FIRMSAdapter
+from .providers.nws_adapter import NWSAdapter
+from .services.eonet_ingest_service import EONETIngestService
+from .services.firms_ingest_service import FIRMSIngestService
+from .services.nws_ingest_service import NWSIngestService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 LOGGER = logging.getLogger("eagle-eye-worker")
@@ -44,6 +50,23 @@ SPACETRACK_PASSWORD = os.getenv("SPACETRACK_PASSWORD")
 N2YO_API_KEY = os.getenv("N2YO_API_KEY")
 SATELLITE_PROPAGATION_INTERVAL_SECONDS = int(os.getenv("SATELLITE_PROPAGATION_INTERVAL_SECONDS", "30"))
 SATELLITE_SOURCE_REFRESH_SECONDS = int(os.getenv("SATELLITE_SOURCE_REFRESH_SECONDS", str(15 * 60)))
+ENABLE_EONET = os.getenv("ENABLE_EONET", "true").strip().lower() in {"1", "true", "yes", "on"}
+EONET_DEFAULT_STATUS = os.getenv("EONET_DEFAULT_STATUS", "open").strip().lower()
+EONET_DEFAULT_DAYS = int(os.getenv("EONET_DEFAULT_DAYS", "30"))
+EONET_POLL_INTERVAL_SECONDS = int(os.getenv("EONET_POLL_INTERVAL_SECONDS", "900"))
+EONET_USE_GEOJSON = os.getenv("EONET_USE_GEOJSON", "true").strip().lower() in {"1", "true", "yes", "on"}
+ENABLE_FIRMS = os.getenv("ENABLE_FIRMS", "true").strip().lower() in {"1", "true", "yes", "on"}
+FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY", "").strip()
+FIRMS_POLL_INTERVAL_SECONDS = int(os.getenv("FIRMS_POLL_INTERVAL_SECONDS", "300"))
+FIRMS_DEFAULT_LOOKBACK_DAYS = int(os.getenv("FIRMS_DEFAULT_LOOKBACK_DAYS", "2"))
+FIRMS_ENABLE_CLUSTERING = os.getenv("FIRMS_ENABLE_CLUSTERING", "true").strip().lower() in {"1", "true", "yes", "on"}
+FIRMS_SENSORS = [item.strip() for item in os.getenv("FIRMS_SENSORS", "VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,MODIS_NRT").split(",") if item.strip()]
+FIRMS_AOI_BBOXES_JSON = os.getenv("FIRMS_AOI_BBOXES_JSON", "[]")
+FIRMS_GLOBAL_TILE_STEP_DEGREES = float(os.getenv("FIRMS_GLOBAL_TILE_STEP_DEGREES", "20"))
+FIRMS_MAX_TILES = int(os.getenv("FIRMS_MAX_TILES", "72"))
+ENABLE_NWS = os.getenv("ENABLE_NWS", "true").strip().lower() in {"1", "true", "yes", "on"}
+NWS_POLL_INTERVAL_SECONDS = int(os.getenv("NWS_POLL_INTERVAL_SECONDS", "300"))
+NWS_ALERTS_ONLY = os.getenv("NWS_ALERTS_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 redis = Redis.from_url(REDIS_URL, decode_responses=True)
@@ -629,6 +652,96 @@ async def satellite_loop() -> None:
         await asyncio.sleep(SATELLITE_PROPAGATION_INTERVAL_SECONDS)
 
 
+def _parse_firms_bboxes(raw_value: str) -> list[tuple[float, float, float, float]]:
+    try:
+        payload = json.loads(raw_value)
+    except json.JSONDecodeError:
+        LOGGER.warning("Invalid FIRMS_AOI_BBOXES_JSON; ignoring configured AOIs.")
+        return []
+    rows: list[tuple[float, float, float, float]] = []
+    for item in payload:
+        if not isinstance(item, list) or len(item) != 4:
+            continue
+        try:
+            rows.append((float(item[0]), float(item[1]), float(item[2]), float(item[3])))
+        except (TypeError, ValueError):
+            continue
+    return rows
+
+
+async def eonet_loop() -> None:
+    if not ENABLE_EONET:
+        LOGGER.info("EONET ingest disabled via ENABLE_EONET=false.")
+        while True:
+            await asyncio.sleep(300)
+    adapter = EONETAdapter(app_name=os.getenv("APP_NAME", "Eagle Eye"), use_geojson=EONET_USE_GEOJSON)
+    service = EONETIngestService(engine, adapter)
+    while True:
+        try:
+            result = await service.run_once(default_status=EONET_DEFAULT_STATUS, default_days=EONET_DEFAULT_DAYS)
+            await publish("hazards.eonet", {"fetched": result.fetched, "normalized": result.normalized})
+            await publish("view.invalidate", {"scope": "hazards"})
+            LOGGER.info("EONET cycle persisted %s source records and %s normalized events", result.fetched, result.normalized)
+        except Exception as exc:  # pragma: no cover - network recovery path
+            LOGGER.warning("EONET ingest failed: %s", exc)
+        await asyncio.sleep(EONET_POLL_INTERVAL_SECONDS)
+
+
+async def firms_loop() -> None:
+    if not ENABLE_FIRMS:
+        LOGGER.info("FIRMS ingest disabled via ENABLE_FIRMS=false.")
+        while True:
+            await asyncio.sleep(300)
+    if not FIRMS_MAP_KEY:
+        LOGGER.warning("FIRMS enabled but FIRMS_MAP_KEY is empty; FIRMS loop will idle.")
+        while True:
+            await asyncio.sleep(300)
+    adapter = FIRMSAdapter(map_key=FIRMS_MAP_KEY, app_name=os.getenv("APP_NAME", "Eagle Eye"))
+    service = FIRMSIngestService(engine, adapter)
+    configured_bboxes = _parse_firms_bboxes(FIRMS_AOI_BBOXES_JSON)
+    while True:
+        try:
+            result = await service.run_once(
+                sensors=FIRMS_SENSORS,
+                lookback_days=FIRMS_DEFAULT_LOOKBACK_DAYS,
+                enable_clustering=FIRMS_ENABLE_CLUSTERING,
+                configured_bboxes=configured_bboxes,
+                global_tile_step_degrees=FIRMS_GLOBAL_TILE_STEP_DEGREES,
+                max_tiles=FIRMS_MAX_TILES,
+            )
+            await publish("hazards.firms", {"fetched": result.fetched, "normalized": result.normalized, "areas": result.queried_areas})
+            await publish("view.invalidate", {"scope": "hazards"})
+            LOGGER.info(
+                "FIRMS cycle persisted %s detections across %s areas and %s normalized fire events",
+                result.fetched,
+                result.queried_areas,
+                result.normalized,
+            )
+        except Exception as exc:  # pragma: no cover - network recovery path
+            LOGGER.warning("FIRMS ingest failed: %s", exc)
+        await asyncio.sleep(FIRMS_POLL_INTERVAL_SECONDS)
+
+
+async def nws_loop() -> None:
+    if not ENABLE_NWS:
+        LOGGER.info("NWS ingest disabled via ENABLE_NWS=false.")
+        while True:
+            await asyncio.sleep(300)
+    if not NWS_ALERTS_ONLY:
+        LOGGER.info("NWS forecast expansion is not implemented yet; running alerts-only ingest.")
+    adapter = NWSAdapter(app_name=os.getenv("APP_NAME", "Eagle Eye"))
+    service = NWSIngestService(engine, adapter)
+    while True:
+        try:
+            result = await service.run_once()
+            await publish("hazards.nws", {"fetched": result.fetched, "normalized": result.normalized})
+            await publish("view.invalidate", {"scope": "hazards"})
+            LOGGER.info("NWS cycle persisted %s alerts and %s normalized weather events", result.fetched, result.normalized)
+        except Exception as exc:  # pragma: no cover - network recovery path
+            LOGGER.warning("NWS ingest failed: %s", exc)
+        await asyncio.sleep(NWS_POLL_INTERVAL_SECONDS)
+
+
 async def retention_loop() -> None:
     while True:
         cutoff = datetime.now(timezone.utc)
@@ -700,6 +813,43 @@ async def retention_loop() -> None:
             conn.execute(
                 text(
                     """
+                    DELETE FROM firms_detections
+                    WHERE acquisition_time < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM eonet_event_geometry
+                    WHERE event_time IS NOT NULL
+                      AND event_time < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM nws_alerts
+                    WHERE COALESCE(expires, effective, sent) < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
+                    DELETE FROM hazard_events_normalized
+                    WHERE COALESCE(end_time, start_time) < (:cutoff - (:retention_days || ' days')::interval)
+                    """
+                ),
+                {"cutoff": cutoff, "retention_days": RETENTION_DAYS},
+            )
+            conn.execute(
+                text(
+                    """
                     DELETE FROM events
                     WHERE start_time < (:cutoff - (:retention_days || ' days')::interval)
                     """
@@ -726,6 +876,9 @@ async def main() -> None:
         maritime_loop(engine, publish),
         satellite_loop(),
         airspace_loop(),
+        eonet_loop(),
+        firms_loop(),
+        nws_loop(),
         event_loop(engine, publish),
         retention_loop(),
     )

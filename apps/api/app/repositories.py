@@ -26,6 +26,7 @@ from .schemas import (
     NoteCreate,
     NoteUpdate,
     TagCreate,
+    TagAssignmentCreate,
     TimeStateUpdate,
     WatchlistCreate,
     WatchlistEntityCreate,
@@ -357,6 +358,36 @@ def _query_domain(table: str, entity_kind: str, timestamp: datetime, view: Globe
     ]
 
 
+def _count_live_rows(table: str, timestamp: datetime, view: GlobeViewState) -> dict[str, int]:
+    total_row = fetch_one(f"SELECT COUNT(*)::int AS count FROM {table}") or {"count": 0}
+    if table == "satellites_current":
+        geom_clause = _bbox_sql()
+    else:
+        geom_clause = _bbox_sql()
+    fresh_row = fetch_one(
+        f"""
+        SELECT COUNT(*)::int AS count
+        FROM {table}
+        WHERE observed_at >= (:timestamp - {_live_track_interval_sql()})
+        """,
+        {"timestamp": timestamp},
+    ) or {"count": 0}
+    bbox_row = fetch_one(
+        f"""
+        SELECT COUNT(*)::int AS count
+        FROM {table}
+        WHERE observed_at >= (:timestamp - {_live_track_interval_sql()})
+          AND {geom_clause}
+        """,
+        {**_bbox_params(view), "timestamp": timestamp},
+    ) or {"count": 0}
+    return {
+        "total_rows": int(total_row.get("count") or 0),
+        "fresh_rows": int(fresh_row.get("count") or 0),
+        "bbox_rows": int(bbox_row.get("count") or 0),
+    }
+
+
 def list_events(*, view: GlobeViewState | None = None, entity_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
     if not _table_exists("events"):
         return []
@@ -401,6 +432,106 @@ def list_events(*, view: GlobeViewState | None = None, entity_id: str | None = N
         """,
         params,
     )
+
+
+def list_hazard_events(
+    *,
+    view: GlobeViewState | None = None,
+    bbox: tuple[float, float, float, float] | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    sources: list[str] | None = None,
+    categories: list[str] | None = None,
+    statuses: list[str] | None = None,
+    severities: list[str] | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not _table_exists("hazard_events_normalized"):
+        return []
+    params: dict[str, Any] = {"limit": limit}
+    clauses = []
+    if view is not None:
+        bbox = (view.west, view.south, view.east, view.north)
+        point_in_time = _utc(view.timestamp)
+        clauses.append("start_time <= :point_in_time")
+        clauses.append("COALESCE(end_time, start_time + interval '24 hours') >= (:point_in_time - interval '12 hours')")
+        params["point_in_time"] = point_in_time
+    if bbox is not None:
+        clauses.append("geometry IS NOT NULL")
+        clauses.append("geometry && ST_MakeEnvelope(:west, :south, :east, :north, 4326)")
+        params.update({"west": bbox[0], "south": bbox[1], "east": bbox[2], "north": bbox[3]})
+    if start_time is not None:
+        clauses.append("COALESCE(end_time, start_time) >= :start_time")
+        params["start_time"] = _utc(start_time)
+    if end_time is not None:
+        clauses.append("start_time <= :end_time")
+        params["end_time"] = _utc(end_time)
+    if sources:
+        clauses.append("LOWER(source) = ANY(:sources)")
+        params["sources"] = [item.lower() for item in sources]
+    if categories:
+        clauses.append("LOWER(COALESCE(properties_json->>'category', type)) = ANY(:categories)")
+        params["categories"] = [item.lower() for item in categories]
+    if statuses:
+        clauses.append("LOWER(status) = ANY(:statuses)")
+        params["statuses"] = [item.lower() for item in statuses]
+    if severities:
+        clauses.append("LOWER(COALESCE(severity, '')) = ANY(:severities)")
+        params["severities"] = [item.lower() for item in severities]
+    rows = fetch_all(
+        f"""
+        SELECT
+          id,
+          source,
+          source_record_id,
+          type,
+          title,
+          status,
+          severity,
+          confidence,
+          start_time,
+          end_time,
+          created_at,
+          CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::json END AS geometry,
+          properties_json
+        FROM hazard_events_normalized
+        WHERE 1 = 1
+        {' '.join(f'AND {clause}' for clause in clauses)}
+        ORDER BY start_time DESC
+        LIMIT :limit
+        """,
+        params,
+    )
+    return [_map_hazard_event_row(row) for row in rows]
+
+
+def _map_hazard_event_row(row: dict[str, Any]) -> dict[str, Any]:
+    properties = row.get("properties_json") or row.get("properties") or {}
+    provenance = properties.get("provenance") or {}
+    return {
+        "id": row["id"],
+        "event_type": row["type"],
+        "category": properties.get("category") or row["type"],
+        "severity": row.get("severity") or "medium",
+        "title": row["title"],
+        "summary": properties.get("description") or properties.get("instruction") or properties.get("area_desc"),
+        "entity_kind": "hazard",
+        "entity_id": str(row["id"]),
+        "related_entity_kind": None,
+        "related_entity_id": None,
+        "geometry": row.get("geometry"),
+        "start_time": row["start_time"],
+        "end_time": row.get("end_time"),
+        "detected_at": row.get("created_at") or row["start_time"],
+        "status": row["status"],
+        "confidence": float(row.get("confidence") or 0.7),
+        "source": row["source"],
+        "source_confidence": float(row.get("confidence") or 0.7),
+        "raw_reference": properties.get("link"),
+        "source_record_id": row.get("source_record_id"),
+        "properties": properties,
+        "provenance": provenance,
+    }
 
 
 def list_relationships(*, selected_ids: list[str] | None = None, limit: int = 200) -> list[dict[str, Any]]:
@@ -536,7 +667,7 @@ def update_aoi(aoi_id: UUID, payload: AoiUpdate) -> dict[str, Any] | None:
 
 
 def events_for_aoi(aoi_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
-    return fetch_all(
+    native_rows = fetch_all(
         """
         SELECT
           e.id,
@@ -567,6 +698,34 @@ def events_for_aoi(aoi_id: UUID, limit: int = 100) -> list[dict[str, Any]]:
         """,
         {"aoi_id": aoi_id, "limit": limit},
     )
+    hazard_rows = []
+    if _table_exists("hazard_events_normalized"):
+        hazard_rows = fetch_all(
+            """
+            SELECT
+              h.id,
+              h.source,
+              h.source_record_id,
+              h.type,
+              h.title,
+              h.status,
+              h.severity,
+              h.confidence,
+              h.start_time,
+              h.end_time,
+              h.created_at,
+              ST_AsGeoJSON(h.geometry)::json AS geometry,
+              h.properties_json
+            FROM hazard_events_normalized h
+            JOIN aois a ON a.id = :aoi_id
+            WHERE h.geometry IS NOT NULL
+              AND ST_Intersects(h.geometry, a.geom)
+            ORDER BY h.start_time DESC
+            LIMIT :limit
+            """,
+            {"aoi_id": aoi_id, "limit": limit},
+        )
+    return native_rows + [_map_hazard_event_row(row) for row in hazard_rows]
 
 
 def satellite_passes(satellite_id: str, *, target_lat: float, target_lon: float, threshold_km: float = 550.0) -> list[dict[str, Any]]:
@@ -767,6 +926,13 @@ def query_view(view: GlobeViewState) -> dict[str, Any]:
         LOGGER.exception("Event view query failed")
         event_rows = []
     try:
+        hazard_layers = [layer for layer in view.enabled_layers if layer in {"eonet", "firms", "nws"}]
+        hazard_rows = list_hazard_events(view=view, sources=hazard_layers, limit=200) if hazard_layers else []
+        event_rows.extend(hazard_rows)
+        event_rows = sorted(event_rows, key=lambda row: row["start_time"], reverse=True)[:250]
+    except Exception:
+        LOGGER.exception("Hazard view query failed")
+    try:
         relationship_rows = list_relationships(selected_ids=view.selected_entities, limit=150)
     except Exception:
         LOGGER.exception("Relationship view query failed")
@@ -784,6 +950,69 @@ def query_view(view: GlobeViewState) -> dict[str, Any]:
             "relationships": len(relationship_rows),
         },
     }
+
+
+def diagnose_view(view: GlobeViewState) -> dict[str, Any]:
+    timestamp = _utc() if view.mode == "live" else _utc(view.timestamp)
+    layers: list[dict[str, Any]] = []
+    total_entities = 0
+    total_clusters = 0
+
+    for key, table, kind in (
+        ("aircraft", "aircraft_current" if view.mode == "live" else "aircraft_history", "aircraft"),
+        ("vessels", "vessels_current" if view.mode == "live" else "vessels_history", "vessel"),
+        ("satellites", "satellites_current" if view.mode == "live" else "satellites_history", "satellite"),
+    ):
+        if key not in view.enabled_layers:
+            continue
+        exists = _table_exists(table)
+        cluster_only = view.camera_height > 7_500_000 and kind in {"aircraft", "vessel", "satellite"}
+        counts = {"total_rows": 0, "fresh_rows": 0, "bbox_rows": 0}
+        rows: list[dict[str, Any]] = []
+        clusters: list[dict[str, Any]] = []
+        if exists:
+            if view.mode == "live":
+                counts = _count_live_rows(table, timestamp, view)
+            try:
+                rows, clusters = _query_domain(table, kind, timestamp, view)
+            except Exception:
+                LOGGER.exception("View diagnostics query failed for %s", key)
+        total_entities += len(rows)
+        total_clusters += len(clusters)
+        layers.append(
+            {
+                "key": key,
+                "table": table,
+                "table_exists": exists,
+                "cluster_only": cluster_only,
+                "total_rows": counts["total_rows"],
+                "fresh_rows": counts["fresh_rows"],
+                "bbox_rows": counts["bbox_rows"],
+                "query_entities": len(rows),
+                "query_clusters": len(clusters),
+            }
+        )
+
+    result = {
+        "view": view.model_dump(),
+        "effective_timestamp": timestamp,
+        "live_track_stale_minutes": LIVE_TRACK_STALE_MINUTES,
+        "layers": layers,
+        "stats": {
+            "layers": len(layers),
+            "entities": total_entities,
+            "clusters": total_clusters,
+        },
+    }
+    LOGGER.info(
+        "View diagnostics mode=%s camera_height=%.0f layers=%s entities=%s clusters=%s",
+        view.mode,
+        view.camera_height,
+        ",".join(layer["key"] for layer in layers),
+        total_entities,
+        total_clusters,
+    )
+    return result
 
 
 def list_entities(view: GlobeViewState) -> list[dict[str, Any]]:
@@ -1029,6 +1258,26 @@ def create_tag(payload: TagCreate) -> dict[str, Any]:
         payload.model_dump(),
     )
     return fetch_one("SELECT id, name, color, source, created_at, updated_at FROM tags WHERE name = :name", {"name": payload.name})
+
+
+def assign_tag(payload: TagAssignmentCreate) -> dict[str, Any]:
+    tag = fetch_one("SELECT id, name, color, source, created_at, updated_at FROM tags WHERE name = :name", {"name": payload.tag_name})
+    if not tag:
+        tag = create_tag(TagCreate(name=payload.tag_name))
+    execute(
+        """
+        INSERT INTO entity_tags (tag_id, case_id, entity_kind, entity_id)
+        VALUES (:tag_id, :case_id, :entity_kind, :entity_id)
+        ON CONFLICT DO NOTHING
+        """,
+        {
+            "tag_id": tag["id"],
+            "case_id": payload.case_id,
+            "entity_kind": payload.entity_kind,
+            "entity_id": payload.entity_id,
+        },
+    )
+    return tag
 
 
 def list_workspaces() -> list[dict[str, Any]]:
@@ -1315,7 +1564,209 @@ def list_source_status() -> list[dict[str, Any]]:
                 "details": {"errors": vessel.get("error_count", 0)},
             }
         )
+    if _table_exists("hazard_source_health"):
+        for hazard in fetch_all(
+            """
+            SELECT source_key, label, source_type, status, last_success_at, item_count, details_json
+            FROM hazard_source_health
+            ORDER BY label ASC
+            """
+        ):
+            rows.append(
+                {
+                    "key": hazard["source_key"],
+                    "label": hazard["label"],
+                    "domain": "hazard",
+                    "status": hazard["status"],
+                    "last_observed_at": hazard.get("last_success_at"),
+                    "item_count": hazard.get("item_count", 0),
+                    "details": hazard.get("details_json") or {"source_type": hazard.get("source_type")},
+                }
+            )
     return rows
+
+
+def list_hazard_categories() -> list[dict[str, Any]]:
+    if not _table_exists("hazard_events_normalized"):
+        return []
+    return fetch_all(
+        """
+        SELECT
+          LOWER(COALESCE(properties_json->>'category', type)) AS key,
+          COALESCE(properties_json->>'category', type) AS label,
+          COUNT(*)::int AS item_count
+        FROM hazard_events_normalized
+        GROUP BY LOWER(COALESCE(properties_json->>'category', type)), COALESCE(properties_json->>'category', type)
+        ORDER BY item_count DESC, label ASC
+        """
+    )
+
+
+def get_hazard_event_detail(event_id: UUID) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT
+          id,
+          source,
+          source_record_id,
+          type,
+          title,
+          status,
+          severity,
+          confidence,
+          start_time,
+          end_time,
+          created_at,
+          CASE WHEN geometry IS NULL THEN NULL ELSE ST_AsGeoJSON(geometry)::json END AS geometry,
+          properties_json
+        FROM hazard_events_normalized
+        WHERE id = :event_id
+        """,
+        {"event_id": event_id},
+    )
+    if not row:
+        return None
+    event = _map_hazard_event_row(row)
+    source_payload = _hazard_source_payload(source=row["source"], source_record_id=row["source_record_id"])
+    linked_cases = fetch_all(
+        """
+        SELECT c.id, c.title, c.summary, c.status, c.priority, c.source, c.created_at, c.updated_at
+        FROM cases c
+        JOIN case_entities ce ON ce.case_id = c.id
+        WHERE ce.entity_kind = 'hazard'
+          AND ce.entity_id = :event_id
+        ORDER BY c.updated_at DESC
+        """,
+        {"event_id": str(event_id)},
+    ) if _table_exists("case_entities") else []
+    linked_aois = fetch_all(
+        """
+        SELECT
+          a.id,
+          a.name,
+          a.description,
+          a.geometry_type,
+          ST_AsGeoJSON(a.geom)::json AS geometry,
+          CASE WHEN a.center_geom IS NULL THEN NULL ELSE ST_AsGeoJSON(a.center_geom)::json END AS center,
+          a.radius_m,
+          a.tags,
+          a.source,
+          a.source_confidence,
+          a.observed_at,
+          a.updated_at
+        FROM aois a
+        JOIN hazard_events_normalized h ON h.id = :event_id
+        WHERE h.geometry IS NOT NULL
+          AND ST_Intersects(a.geom, h.geometry)
+        ORDER BY a.updated_at DESC
+        LIMIT 12
+        """,
+        {"event_id": event_id},
+    ) if row.get("geometry") is not None and _table_exists("aois") else []
+    nearby = _hazard_nearby(event_id)
+    links = [value for value in [event.get("raw_reference"), (event.get("properties") or {}).get("link")] if value]
+    return {
+        "event": event,
+        "source_payload": source_payload or {},
+        "linked_cases": linked_cases,
+        "linked_aois": linked_aois,
+        "nearby": nearby,
+        "links": links,
+    }
+
+
+def _hazard_source_payload(*, source: str, source_record_id: str) -> dict[str, Any] | None:
+    if source == "eonet" and _table_exists("eonet_events"):
+        row = fetch_one(
+            """
+            SELECT raw_event_json AS payload
+            FROM eonet_events
+            WHERE eonet_event_id = :source_record_id
+            """,
+            {"source_record_id": source_record_id},
+        )
+        return row.get("payload") if row else None
+    if source == "firms" and _table_exists("firms_detections") and source_record_id.startswith("firms:"):
+        row = fetch_one(
+            """
+            SELECT raw_detection_json AS payload
+            FROM firms_detections
+            WHERE firms_detection_id = :source_record_id
+            """,
+            {"source_record_id": source_record_id},
+        )
+        return row.get("payload") if row else None
+    if source == "nws" and _table_exists("nws_alerts"):
+        row = fetch_one(
+            """
+            SELECT raw_alert_json AS payload
+            FROM nws_alerts
+            WHERE nws_alert_id = :source_record_id
+            """,
+            {"source_record_id": source_record_id},
+        )
+        return row.get("payload") if row else None
+    return None
+
+
+def _hazard_nearby(event_id: UUID) -> dict[str, list[dict[str, Any]]]:
+    if not _table_exists("hazard_events_normalized"):
+        return {}
+    nearby: dict[str, list[dict[str, Any]]] = {}
+    queries = {
+        "aircraft": (
+            "aircraft_current",
+            """
+            SELECT id, COALESCE(callsign, icao24, id) AS label, observed_at,
+                   ST_Distance(geom::geography, h.geometry::geography) AS distance_m
+            FROM aircraft_current, hazard_events_normalized h
+            WHERE h.id = :event_id AND h.geometry IS NOT NULL
+              AND ST_DWithin(geom::geography, h.geometry::geography, 250000)
+            ORDER BY distance_m ASC
+            LIMIT 8
+            """,
+        ),
+        "vessels": (
+            "vessels_current",
+            """
+            SELECT id, COALESCE(vessel_name, mmsi, id) AS label, observed_at,
+                   ST_Distance(geom::geography, h.geometry::geography) AS distance_m
+            FROM vessels_current, hazard_events_normalized h
+            WHERE h.id = :event_id AND h.geometry IS NOT NULL
+              AND ST_DWithin(geom::geography, h.geometry::geography, 250000)
+            ORDER BY distance_m ASC
+            LIMIT 8
+            """,
+        ),
+        "satellites": (
+            "satellites_current",
+            """
+            SELECT id, COALESCE(name, norad_cat_id, id) AS label, observed_at,
+                   ST_Distance(geom::geography, h.geometry::geography) AS distance_m
+            FROM satellites_current, hazard_events_normalized h
+            WHERE h.id = :event_id AND h.geometry IS NOT NULL
+              AND ST_DWithin(geom::geography, h.geometry::geography, 750000)
+            ORDER BY distance_m ASC
+            LIMIT 8
+            """,
+        ),
+        "webcams": (
+            "webcams",
+            """
+            SELECT id, name AS label, created_at AS observed_at,
+                   ST_Distance(geom::geography, h.geometry::geography) AS distance_m
+            FROM webcams, hazard_events_normalized h
+            WHERE h.id = :event_id AND h.geometry IS NOT NULL
+              AND ST_DWithin(geom::geography, h.geometry::geography, 250000)
+            ORDER BY distance_m ASC
+            LIMIT 8
+            """,
+        ),
+    }
+    for key, (table_name, query) in queries.items():
+        if _table_exists(table_name):
+            nearby[key] = fetch_all(query, {"event_id": event_id})
+    return nearby
 
 
 def investigation_bundle(entity_id: str) -> dict[str, Any]:

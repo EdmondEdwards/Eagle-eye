@@ -24,6 +24,7 @@ import type {
   EntityRecord,
   EventRecord,
   GlobeViewState,
+  HazardEventDetail,
   InvestigationBundle,
   NoteRecord,
   RelationshipRecord,
@@ -146,9 +147,47 @@ function pointFromGeometry(geometry?: { type: string; coordinates?: unknown } | 
 }
 
 function polygonHierarchy(geometry?: { type: string; coordinates?: unknown } | null): Cartesian3[] | null {
-  if (!geometry?.coordinates || geometry.type !== "Polygon") return null;
-  const firstRing = (geometry.coordinates as number[][][])[0];
+  if (!geometry?.coordinates) return null;
+  if (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon") return null;
+  const firstRing =
+    geometry.type === "Polygon"
+      ? (geometry.coordinates as number[][][])[0]
+      : (geometry.coordinates as number[][][][])[0]?.[0];
+  if (!firstRing) return null;
   return firstRing.map(([lon, lat]) => Cartesian3.fromDegrees(lon, lat));
+}
+
+function geometryCenter(geometry?: { type: string; coordinates?: unknown } | null): { lon: number; lat: number } | null {
+  const point = pointFromGeometry(geometry);
+  if (point) return point;
+  if (!geometry?.coordinates || (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")) return null;
+  const ring =
+    geometry.type === "Polygon"
+      ? (geometry.coordinates as number[][][])[0]
+      : (geometry.coordinates as number[][][][])[0]?.[0];
+  if (!ring?.length) return null;
+  const sums = ring.reduce(
+    (acc, [lon, lat]) => ({ lon: acc.lon + lon, lat: acc.lat + lat }),
+    { lon: 0, lat: 0 }
+  );
+  return { lon: sums.lon / ring.length, lat: sums.lat / ring.length };
+}
+
+function eventColor(event: EventRecord): string {
+  const category = event.category.toLowerCase();
+  const source = event.source.toLowerCase();
+  if (source === "firms") return "#ff5d33";
+  if (source === "nws") {
+    if (event.severity === "high") return "#ff5f61";
+    if (event.severity === "medium") return "#ffb347";
+    return "#57a8ff";
+  }
+  if (category.includes("wildfire")) return "#ff6b3d";
+  if (category.includes("storm")) return "#f7b23b";
+  if (category.includes("volcano")) return "#ff3b30";
+  if (category.includes("earthquake")) return "#9b6bff";
+  if (category.includes("flood")) return "#4b8dff";
+  return "#ff8a3d";
 }
 
 function detailRows(record?: EntityRecord | EventRecord | RelationshipRecord | null): Array<[string, string]> {
@@ -211,6 +250,7 @@ function App() {
   const [recentEvents, setRecentEvents] = useState<EventRecord[]>([]);
   const [relationships, setRelationships] = useState<RelationshipRecord[]>([]);
   const [bundle, setBundle] = useState<InvestigationBundle | null>(null);
+  const [hazardDetail, setHazardDetail] = useState<HazardEventDetail | null>(null);
   const [selectedSatelliteFov, setSelectedSatelliteFov] = useState<SatelliteFovResponse | null>(null);
   const [followSelected, setFollowSelected] = useState(false);
   const [eventSeverityFilter, setEventSeverityFilter] = useState<"all" | "low" | "medium" | "high">("all");
@@ -500,28 +540,45 @@ function App() {
     }
 
     for (const event of renderedEvents) {
-      const point = pointFromGeometry(event.geometry ?? undefined);
-      if (!point) continue;
-      viewer.entities.add({
-        id: event.id,
-        position: Cartesian3.fromDegrees(point.lon, point.lat),
-        point: {
-          pixelSize: 10,
-          color: Color.fromCssColorString("#ff6b6b"),
-          outlineColor: Color.WHITE,
-          outlineWidth: 1
-        },
-        label: selection?.id === event.id || cameraHeight < 6_500_000 ? {
-          text: event.title,
-          font: "500 11px IBM Plex Sans",
-          fillColor: Color.fromCssColorString("#ffd7d7"),
-          verticalOrigin: VerticalOrigin.TOP,
-          pixelOffset: new Cartesian2(0, 10)
-        } : undefined,
-        properties: {
-          payload: { kind: "event", id: event.id }
-        }
-      });
+      const point = geometryCenter(event.geometry ?? undefined);
+      const polygon = polygonHierarchy(event.geometry ?? undefined);
+      const color = eventColor(event);
+      if (point) {
+        viewer.entities.add({
+          id: event.id,
+          position: Cartesian3.fromDegrees(point.lon, point.lat),
+          point: {
+            pixelSize: event.source === "firms" ? 11 : 9,
+            color: Color.fromCssColorString(color),
+            outlineColor: Color.WHITE,
+            outlineWidth: 1
+          },
+          label: selection?.id === event.id || cameraHeight < 6_500_000 ? {
+            text: `${event.title}`,
+            font: "500 11px IBM Plex Sans",
+            fillColor: Color.fromCssColorString("#ffd7d7"),
+            verticalOrigin: VerticalOrigin.TOP,
+            pixelOffset: new Cartesian2(0, 10)
+          } : undefined,
+          properties: {
+            payload: { kind: "event", id: event.id }
+          }
+        });
+      }
+      if (polygon) {
+        viewer.entities.add({
+          id: `${event.id}:polygon`,
+          polygon: {
+            hierarchy: polygon,
+            material: Color.fromCssColorString(color).withAlpha(event.source === "nws" ? 0.2 : 0.14),
+            outline: true,
+            outlineColor: Color.fromCssColorString(color)
+          },
+          properties: {
+            payload: { kind: "event", id: event.id }
+          }
+        });
+      }
     }
 
     for (const entity of renderedEntities) {
@@ -651,6 +708,14 @@ function App() {
   }, [selectedEntity]);
 
   useEffect(() => {
+    if (!selectedEvent || !["eonet", "firms", "nws"].includes(selectedEvent.source)) {
+      setHazardDetail(null);
+      return;
+    }
+    api.getHazardEventDetail(selectedEvent.id).then(setHazardDetail).catch(() => setHazardDetail(null));
+  }, [selectedEvent]);
+
+  useEffect(() => {
     if (!timeState || timeState.status !== "playing") return;
     const interval = window.setInterval(() => {
       api.getTimeState().then(setTimeState).catch(() => undefined);
@@ -757,12 +822,22 @@ function App() {
   }
 
   async function createQuickCase() {
-    const title = window.prompt("Case title", selectedEntity ? `Investigate ${selectedEntity.label}` : "New case");
+    const title = window.prompt(
+      "Case title",
+      selectedEntity ? `Investigate ${selectedEntity.label}` : selectedEvent ? `Investigate ${selectedEvent.title}` : "New case"
+    );
     if (!title) return;
+    const entities = selectedEntity
+      ? [{ entity_kind: selectedEntity.entity_kind, entity_id: selectedEntity.id }]
+      : selectedEvent
+        ? [{ entity_kind: "hazard", entity_id: selectedEvent.id }]
+        : [];
     await api.createCase({
       title,
-      summary: selectedEvent?.summary ?? (selectedEntity ? `Focused on ${selectedEntity.label}` : "Analyst-created case"),
-      entities: selectedEntity ? [{ entity_kind: selectedEntity.entity_kind, entity_id: selectedEntity.id }] : []
+      summary:
+        selectedEvent?.summary ??
+        (selectedEntity ? `Focused on ${selectedEntity.label}` : selectedEvent ? `Focused on ${selectedEvent.title}` : "Analyst-created case"),
+      entities
     });
     await loadSidebarData();
   }
@@ -772,8 +847,19 @@ function App() {
     if (!body) return;
     await api.createNote({
       body,
-      entity_kind: selectedEntity?.entity_kind,
-      entity_id: selectedEntity?.id
+      entity_kind: selectedEntity?.entity_kind ?? (selectedEvent ? "hazard" : undefined),
+      entity_id: selectedEntity?.id ?? selectedEvent?.id
+    });
+    await loadSidebarData();
+  }
+
+  async function addQuickTag() {
+    const tagName = window.prompt("Tag name", selectedEvent ? selectedEvent.category : selectedEntity?.entity_kind ?? "hazard");
+    if (!tagName) return;
+    await api.assignTag({
+      tag_name: tagName,
+      entity_kind: selectedEntity?.entity_kind ?? (selectedEvent ? "hazard" : undefined),
+      entity_id: selectedEntity?.id ?? selectedEvent?.id
     });
     await loadSidebarData();
   }
@@ -841,10 +927,13 @@ function App() {
   }
 
   async function createAoiFromSelection() {
-    if (!selectedEntity) return;
-    const point = pointFromGeometry(selectedEntity.geometry);
+    const sourceGeometry = selectedEntity?.geometry ?? selectedEvent?.geometry ?? null;
+    const sourceLabel = selectedEntity?.label ?? selectedEvent?.title ?? "Selection";
+    const sourceTag = selectedEntity?.entity_kind ?? selectedEvent?.source ?? "hazard";
+    if (!sourceGeometry) return;
+    const point = geometryCenter(sourceGeometry);
     if (!point) return;
-    const name = window.prompt("AOI name", `${selectedEntity.label} AOI`);
+    const name = window.prompt("AOI name", `${sourceLabel} AOI`);
     if (!name) return;
     await api.createAoi({
       name,
@@ -862,7 +951,7 @@ function App() {
           [point.lon - 1, point.lat - 1]
         ]]
       },
-      tags: [selectedEntity.entity_kind]
+      tags: [sourceTag]
     });
     await loadSidebarData();
   }
@@ -1027,7 +1116,7 @@ function App() {
               </div>
             </div>
           </div>
-        ) : viewData && viewData.stats.entities === 0 && viewData.stats.clusters === 0 ? (
+        ) : viewData && viewData.stats.entities === 0 && viewData.stats.clusters === 0 && viewData.stats.events === 0 ? (
           <div className="globe-status-overlay">
             <div className="globe-loading-card empty">
               <span className="eyebrow">No In-View Traffic</span>
@@ -1069,7 +1158,10 @@ function App() {
           <button onClick={() => setFollowSelected((value) => !value)}>{followSelected ? "Unfollow" : "Follow"}</button>
           <button onClick={createQuickCase}>Create case</button>
           <button onClick={addQuickNote}>Add note</button>
-          <button onClick={createAoiFromSelection} disabled={!selectedEntity}>
+          <button onClick={addQuickTag} disabled={!selectedEntity && !selectedEvent}>
+            Add tag
+          </button>
+          <button onClick={createAoiFromSelection} disabled={!selectedEntity && !selectedEvent?.geometry}>
             AOI from selection
           </button>
           <button onClick={updateCaseStatus}>Update case</button>
@@ -1116,7 +1208,7 @@ function App() {
               {selectedEntity
                 ? `${selectedEntity.entity_kind} • observed ${formatDate(selectedEntity.observed_at)}`
                 : selectedEvent
-                  ? `${selectedEvent.category} • ${formatDate(selectedEvent.start_time)}`
+                  ? `${selectedEvent.source.toUpperCase()} • ${selectedEvent.category} • ${formatDate(selectedEvent.start_time)}`
                   : "Click an entity, AOI, event, or cluster on the globe."}
             </p>
             {detailRows(selectedEntity ?? selectedEvent).slice(0, 10).map(([key, value]) => (
@@ -1125,6 +1217,37 @@ function App() {
                 <strong>{value}</strong>
               </div>
             ))}
+            {hazardDetail?.links?.length ? (
+              <div className="badge-row">
+                {hazardDetail.links.slice(0, 2).map((link) => (
+                  <a key={link} className="info-badge" href={link} target="_blank" rel="noreferrer">
+                    Source link
+                  </a>
+                ))}
+              </div>
+            ) : null}
+            {hazardDetail ? (
+              <div className="stack-list compact">
+                {Object.entries(hazardDetail.nearby).map(([kind, rows]) => (
+                  <div key={kind} className="list-row static">
+                    <strong>{kind}</strong>
+                    <span>{rows.length} nearby</span>
+                  </div>
+                ))}
+                {hazardDetail.linked_aois.slice(0, 2).map((aoi) => (
+                  <div key={aoi.id} className="list-row static">
+                    <strong>{aoi.name}</strong>
+                    <span>intersecting AOI</span>
+                  </div>
+                ))}
+                {hazardDetail.linked_cases.slice(0, 2).map((hazardCase) => (
+                  <div key={hazardCase.id} className="list-row static">
+                    <strong>{hazardCase.title}</strong>
+                    <span>{hazardCase.status}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {selectedSatelliteFov ? (
               <div className="fov-card">
                 <span>Sensor swath</span>

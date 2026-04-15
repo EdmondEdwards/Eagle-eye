@@ -17,6 +17,21 @@ export interface GlobeViewState {
   selected_aois: string[];
 }
 
+export interface HazardViewQuery {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+  camera_height: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  sources: string[];
+  categories: string[];
+  statuses: string[];
+  severities: string[];
+  limit: number;
+}
+
 export interface TimeState {
   mode: TimeMode;
   status: PlaybackStatus;
@@ -65,6 +80,9 @@ export interface EventRecord {
   source: string;
   source_confidence: number;
   raw_reference?: string | null;
+  source_record_id?: string | null;
+  properties: Record<string, unknown>;
+  provenance: Record<string, unknown>;
 }
 
 export interface RelationshipRecord {
@@ -303,4 +321,18 @@ export interface InvestigationBundle {
   timeline?: EntityTimelineResponse | null;
   aoi_events: EventRecord[];
   aoi_passes: Array<Record<string, unknown>>;
+}
+
+export interface HazardViewResponse {
+  events: EventRecord[];
+  stats: Record<string, number>;
+}
+
+export interface HazardEventDetail {
+  event: EventRecord;
+  source_payload: Record<string, unknown>;
+  linked_cases: CaseRecord[];
+  linked_aois: AoiRecord[];
+  nearby: Record<string, Array<Record<string, unknown>>>;
+  links: string[];
 }

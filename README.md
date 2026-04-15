@@ -50,6 +50,7 @@ eagle-eye/
 - AOIs with events and satellite pass analysis
 - Satellite FOV footprint and pass APIs
 - Event engine for stale tracks, airspace violations, loitering, and overflight correlation
+- Hazard/event intelligence overlays from NASA EONET, NASA FIRMS, and NOAA/NWS
 - Investigation workflows with cases, workspaces, watchlists, notes, tags, and relationships
 
 ## Database-first View Rendering
@@ -69,6 +70,11 @@ The critical contract is:
 - `satellites_catalog`, `satellites_current`, `satellites_history`
 - `airspace_overlays`
 - `events`
+- `eonet_events`, `eonet_event_geometry`
+- `firms_detections`
+- `nws_alerts`
+- `hazard_events_normalized`
+- `hazard_source_health`
 - `relationships`
 - `cases`
 - `workspaces`
@@ -99,7 +105,22 @@ AISSTREAM_API_KEY
 CESIUM_ION_TOKEN
 VITE_API_BASE_URL
 RETENTION_DAYS
+ENABLE_EONET
+EONET_DEFAULT_STATUS
+EONET_DEFAULT_DAYS
+EONET_POLL_INTERVAL_SECONDS
+EONET_USE_GEOJSON
+ENABLE_FIRMS
+FIRMS_MAP_KEY
+FIRMS_POLL_INTERVAL_SECONDS
+FIRMS_DEFAULT_LOOKBACK_DAYS
+FIRMS_ENABLE_CLUSTERING
+ENABLE_NWS
+NWS_POLL_INTERVAL_SECONDS
+NWS_ALERTS_ONLY
 ```
+
+`FIRMS_MAP_KEY` is optional for boot, but required for live FIRMS ingest. Obtain a free key from the [NASA FIRMS API portal](https://firms.modaps.eosdis.nasa.gov/api/).
 
 ## Run
 
@@ -120,6 +141,29 @@ Then open:
 - Vessels: AISStream is primary, AISHub is fallback-ready, Global Fishing Watch is optional enrichment.
 - Satellites: CelesTrak ingest with propagated current positions and sensor footprint APIs.
 - Airspace: FAA TFR overlays are ingested into `airspace_overlays`.
+- EONET: public natural-event catalog. Stored natively in `eonet_events` / `eonet_event_geometry`, then normalized into `hazard_events_normalized` as `natural_event`.
+- FIRMS: public fire detections with free `MAP_KEY`. Raw detections land in `firms_detections`; view-friendly normalized rows are stored as `fire_detection` or `fire_cluster_event`.
+- NWS: public `api.weather.gov` alerts. Raw alerts land in `nws_alerts`; normalized rows are stored as `weather_alert`.
+
+## Hazard Stack
+
+- These sources are not track feeds. They ingest as event, detection, and alert data.
+- Workers write source-native payloads into PostgreSQL/PostGIS first, preserving raw JSON for provenance.
+- The API exposes viewport-aware hazard routes under `/api/hazards/*`.
+- The globe remains database-first: the client never downloads global hazard inventories, only the current bbox/time slice.
+- FIRMS layers switch between clustered normalized events and native detections depending on query path and zoom strategy.
+
+Current limitations:
+
+- NOAA forecast grids and observations are not implemented yet; alerts are the first NWS layer.
+- FIRMS footprint polygons are not implemented yet.
+- EONET category semantics depend on NASA’s source-native taxonomy.
+
+Planned expansions:
+
+- NOAA forecast and observation overlays
+- FIRMS burned-area / footprint support
+- Additional linked NASA layers and cross-source enrichment
 
 If a provider key is absent, the system stays bootable and the corresponding ingest loop idles rather than blocking the rest of the platform.
 
