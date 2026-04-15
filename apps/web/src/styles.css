@@ -54,6 +54,7 @@ select {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 0;
   border-radius: inherit;
   pointer-events: none;
   background: linear-gradient(180deg, rgba(140, 180, 220, 0.05), transparent 22%, transparent 78%, rgba(140, 180, 220, 0.04));
@@ -211,6 +212,11 @@ select {
   height: 100%;
 }
 
+.globe-host {
+  position: absolute;
+  inset: 0;
+}
+
 .globe-host .cesium-viewer-toolbar,
 .globe-host .cesium-viewer-animationContainer,
 .globe-host .cesium-viewer-timelineContainer,
@@ -219,5 +225,5 @@ select {
 }
 
 .globe-host .cesium-widget canvas {
-  filter: saturate(0.84) brightness(0.72) contrast(1.08);
+  filter: saturate(0.92) brightness(0.9) contrast(1.05);
 }
