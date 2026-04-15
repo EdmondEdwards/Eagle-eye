@@ -35,6 +35,7 @@ from .schemas import (
 )
 
 LOGGER = logging.getLogger(__name__)
+LIVE_TRACK_STALE_MINUTES = 5
 
 
 def _utc(value: datetime | None = None) -> datetime:
@@ -43,6 +44,10 @@ def _utc(value: datetime | None = None) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _live_track_interval_sql() -> str:
+    return f"interval '{LIVE_TRACK_STALE_MINUTES} minutes'"
 
 
 def _table_exists(table_name: str) -> bool:
@@ -168,7 +173,7 @@ def _cluster_query(table: str, entity_kind: str, timestamp: datetime, view: Glob
         id_column = "icao24"
     cell_size = 10.0 if view.camera_height > 12_000_000 else 4.0 if view.camera_height > 4_000_000 else 1.25
     if view.mode == "live" and table.endswith("_current"):
-        time_clause = "observed_at >= (:timestamp - interval '8 hours')"
+        time_clause = f"observed_at >= (:timestamp - {_live_track_interval_sql()})"
         params = {**_bbox_params(view), "timestamp": timestamp, "cell_size": cell_size}
         from_clause = table
     else:
@@ -263,7 +268,7 @@ def _entity_rows(table: str, entity_kind: str, timestamp: datetime, view: GlobeV
                    {label} AS label
             FROM {table}
             WHERE {_bbox_sql()}
-              AND observed_at >= (:timestamp - interval '8 hours')
+              AND observed_at >= (:timestamp - {_live_track_interval_sql()})
             ORDER BY observed_at DESC
             LIMIT :limit
             """,

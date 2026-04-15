@@ -136,10 +136,24 @@ function timelineStats(bundle?: InvestigationBundle | null): {
   };
 }
 
+function trimEntities<T extends { id: string }>(rows: T[], budget: number, selectedId?: string | null): T[] {
+  if (rows.length <= budget) return rows;
+  const head = rows.slice(0, budget);
+  if (!selectedId || head.some((row) => row.id === selectedId)) {
+    return head;
+  }
+  const selected = rows.find((row) => row.id === selectedId);
+  return selected ? [selected, ...head.slice(0, budget - 1)] : head;
+}
+
 function App() {
   const globeRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
+  const lastSidebarRefreshRef = useRef(0);
+  const lastFollowTargetRef = useRef<string | null>(null);
 
   const [timeState, setTimeState] = useState<TimeState | null>(null);
   const [layers, setLayers] = useState<LayerState>(initialLayers);
@@ -162,6 +176,7 @@ function App() {
   const [activeRightTab, setActiveRightTab] = useState<RightTab>("selection");
   const [statusText, setStatusText] = useState("Waiting for backend");
   const [socketOnline, setSocketOnline] = useState(false);
+  const [cameraHeight, setCameraHeight] = useState(19_000_000);
 
   const selectedEntity = useMemo(
     () => viewData?.entities.find((entity) => entity.id === selection?.id) ?? null,
@@ -192,6 +207,22 @@ function App() {
   const selectedCluster = useMemo(
     () => (selection?.kind === "cluster" ? viewData?.clusters.find((item) => item.id === selection.id) ?? null : null),
     [selection, viewData]
+  );
+  const entityRenderBudget = cameraHeight >= 12_000_000 ? 550 : cameraHeight >= 7_000_000 ? 900 : 1400;
+  const clusterRenderBudget = cameraHeight >= 12_000_000 ? 120 : 180;
+  const eventRenderBudget = cameraHeight >= 12_000_000 ? 40 : 80;
+  const selectedEntityId = selection?.kind === "entity" ? selection.id : null;
+  const renderedEntities = useMemo(
+    () => trimEntities(filteredEntities, entityRenderBudget, selectedEntityId),
+    [entityRenderBudget, filteredEntities, selectedEntityId]
+  );
+  const renderedClusters = useMemo(
+    () => viewData?.clusters.slice(0, clusterRenderBudget) ?? [],
+    [clusterRenderBudget, viewData]
+  );
+  const renderedEvents = useMemo(
+    () => viewData?.events.slice(0, eventRenderBudget) ?? [],
+    [eventRenderBudget, viewData]
   );
 
   async function loadSidebarData() {
@@ -241,7 +272,10 @@ function App() {
   }
 
   async function refreshView() {
-    if (!viewerRef.current || !timeState) return;
+    if (!viewerRef.current || !timeState || refreshInFlightRef.current) {
+      if (timeState) refreshQueuedRef.current = true;
+      return;
+    }
     const payload = buildViewState(
       viewerRef.current,
       timeState,
@@ -253,13 +287,22 @@ function App() {
       setStatusText("Camera initializing");
       return;
     }
-    const response = await api.queryView(payload);
-    startTransition(() => {
-      setViewData(response);
-      setStatusText(
-        `${response.stats.entities} entities, ${response.stats.events} events, ${response.stats.clusters} clusters`
-      );
-    });
+    refreshInFlightRef.current = true;
+    try {
+      const response = await api.queryView(payload);
+      startTransition(() => {
+        setViewData(response);
+        setStatusText(
+          `${response.stats.entities} entities, ${response.stats.events} events, ${response.stats.clusters} clusters`
+        );
+      });
+    } finally {
+      refreshInFlightRef.current = false;
+      if (refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        scheduleRefresh(180);
+      }
+    }
   }
 
   function scheduleRefresh(delay = 250) {
@@ -268,7 +311,7 @@ function App() {
     }
     refreshTimerRef.current = window.setTimeout(() => {
       refreshView().catch((error: unknown) => setStatusText(String(error)));
-    }, delay);
+    }, Math.max(120, delay));
   }
 
   useEffect(() => {
@@ -312,6 +355,7 @@ function App() {
     });
     viewerRef.current = viewer;
     window.setTimeout(() => scheduleRefresh(50), 400);
+    setCameraHeight(viewer.camera.positionCartographic.height);
 
     const handler = new ScreenSpaceEventHandler(viewer.canvas);
     handler.setInputAction((movement: { position: Cartesian2 }) => {
@@ -321,9 +365,13 @@ function App() {
         | null;
       if (payload) setSelection(payload);
     }, ScreenSpaceEventType.LEFT_CLICK);
-
-    viewer.camera.moveEnd.addEventListener(() => scheduleRefresh(150));
+    const onMoveEnd = () => {
+      setCameraHeight(viewer.camera.positionCartographic.height);
+      scheduleRefresh(220);
+    };
+    viewer.camera.moveEnd.addEventListener(onMoveEnd);
     return () => {
+      viewer.camera.moveEnd.removeEventListener(onMoveEnd);
       handler.destroy();
       viewer.destroy();
       viewerRef.current = null;
@@ -332,15 +380,19 @@ function App() {
 
   useEffect(() => {
     if (!timeState) return;
-    scheduleRefresh(10);
+    scheduleRefresh(80);
   }, [timeState, layers]);
 
   useEffect(() => {
     if (!timeState) return;
     const socket = connectLiveFeed((message) => {
       if (message.topic === "view.invalidate" || message.topic === "events") {
-        scheduleRefresh(150);
-        loadSidebarData().catch(() => undefined);
+        scheduleRefresh(260);
+        const now = Date.now();
+        if (now - lastSidebarRefreshRef.current > 10_000) {
+          lastSidebarRefreshRef.current = now;
+          loadSidebarData().catch(() => undefined);
+        }
       }
       if (message.topic === "heartbeat") setSocketOnline(true);
     });
@@ -365,7 +417,7 @@ function App() {
     const viewer = viewerRef.current;
     viewer.entities.removeAll();
 
-    for (const cluster of viewData.clusters) {
+    for (const cluster of renderedClusters) {
       viewer.entities.add({
         id: cluster.id,
         position: Cartesian3.fromDegrees(cluster.lon, cluster.lat),
@@ -380,21 +432,21 @@ function App() {
           outlineColor: Color.BLACK,
           outlineWidth: 1
         },
-        label: {
+        label: cameraHeight < 9_000_000 ? {
           text: `${cluster.count}`,
           font: "600 12px IBM Plex Sans",
           fillColor: Color.WHITE,
           style: LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: VerticalOrigin.BOTTOM,
           pixelOffset: new Cartesian2(0, -12)
-        },
+        } : undefined,
         properties: {
           payload: { kind: "cluster", id: cluster.id }
         }
       });
     }
 
-    for (const event of viewData.events) {
+    for (const event of renderedEvents) {
       const point = pointFromGeometry(event.geometry ?? undefined);
       if (!point) continue;
       viewer.entities.add({
@@ -406,20 +458,20 @@ function App() {
           outlineColor: Color.WHITE,
           outlineWidth: 1
         },
-        label: {
+        label: selection?.id === event.id || cameraHeight < 6_500_000 ? {
           text: event.title,
           font: "500 11px IBM Plex Sans",
           fillColor: Color.fromCssColorString("#ffd7d7"),
           verticalOrigin: VerticalOrigin.TOP,
           pixelOffset: new Cartesian2(0, 10)
-        },
+        } : undefined,
         properties: {
           payload: { kind: "event", id: event.id }
         }
       });
     }
 
-    for (const entity of filteredEntities) {
+    for (const entity of renderedEntities) {
       const point = pointFromGeometry(entity.geometry);
       const polygon = polygonHierarchy(entity.geometry);
       const color =
@@ -447,7 +499,7 @@ function App() {
             text: entity.label,
             font: selection?.id === entity.id ? "600 13px IBM Plex Sans" : "500 11px IBM Plex Sans",
             fillColor: Color.WHITE,
-            show: selection?.id === entity.id,
+            show: selection?.id === entity.id || (entitySearch.trim().length > 0 && cameraHeight < 8_500_000),
             verticalOrigin: VerticalOrigin.TOP,
             pixelOffset: new Cartesian2(0, 10)
           },
@@ -512,18 +564,22 @@ function App() {
         });
       }
     }
-
-    if (followSelected && selectedEntity) {
-      const point = selectionPoint(selectedEntity);
-      if (point) {
-        viewer.camera.flyTo({
-          destination: Cartesian3.fromDegrees(point.lon, point.lat, 1_800_000),
-          duration: 0.8
-        });
-      }
-    }
     viewer.scene.requestRender();
-  }, [filteredEntities, followSelected, selectedEntity, selectedSatelliteFov, selection, viewData]);
+  }, [cameraHeight, entitySearch, renderedClusters, renderedEntities, renderedEvents, selectedSatelliteFov, selection, viewData]);
+
+  useEffect(() => {
+    if (!followSelected || !selectedEntity || !viewerRef.current) return;
+    const point = selectionPoint(selectedEntity);
+    if (!point) return;
+    const nextKey = `${selectedEntity.id}:${point.lon.toFixed(3)}:${point.lat.toFixed(3)}`;
+    if (lastFollowTargetRef.current === nextKey) return;
+    lastFollowTargetRef.current = nextKey;
+    viewerRef.current.camera.flyTo({
+      destination: Cartesian3.fromDegrees(point.lon, point.lat, 1_800_000),
+      duration: 0.35
+    });
+    viewerRef.current.scene.requestRender();
+  }, [followSelected, selectedEntity]);
 
   useEffect(() => {
     if (!selectedEntity) {
