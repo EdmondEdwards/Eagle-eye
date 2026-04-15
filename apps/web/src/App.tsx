@@ -208,6 +208,8 @@ function App() {
   const [socketOnline, setSocketOnline] = useState(false);
   const [cameraHeight, setCameraHeight] = useState(19_000_000);
   const [isViewLoading, setIsViewLoading] = useState(true);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
 
   const selectedEntity = useMemo(
     () => viewData?.entities.find((entity) => entity.id === selection?.id) ?? null,
@@ -648,6 +650,57 @@ function App() {
   async function patchTime(update: Record<string, unknown>) {
     const next = await api.setTimeState(update);
     setTimeState(next);
+    scheduleRefresh(60);
+  }
+
+  function moveCamera(direction: "up" | "down" | "left" | "right") {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const distance = Math.max(12000, viewer.camera.positionCartographic.height * 0.18);
+    if (direction === "up") viewer.camera.moveUp(distance);
+    if (direction === "down") viewer.camera.moveDown(distance);
+    if (direction === "left") viewer.camera.moveLeft(distance);
+    if (direction === "right") viewer.camera.moveRight(distance);
+    viewer.scene.requestRender();
+    scheduleRefresh(120);
+  }
+
+  function zoomCamera(direction: "in" | "out") {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const distance = Math.max(18000, viewer.camera.positionCartographic.height * 0.22);
+    if (direction === "in") viewer.camera.moveForward(distance);
+    if (direction === "out") viewer.camera.moveBackward(distance);
+    viewer.scene.requestRender();
+    scheduleRefresh(120);
+  }
+
+  function tiltCamera(direction: "up" | "down") {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const amount = CesiumMath.toRadians(8);
+    if (direction === "up") viewer.camera.lookUp(amount);
+    if (direction === "down") viewer.camera.lookDown(amount);
+    viewer.scene.requestRender();
+    scheduleRefresh(120);
+  }
+
+  function rotateCamera(direction: "left" | "right") {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const amount = CesiumMath.toRadians(10);
+    if (direction === "left") viewer.camera.twistLeft(amount);
+    if (direction === "right") viewer.camera.twistRight(amount);
+    viewer.scene.requestRender();
+    scheduleRefresh(120);
+  }
+
+  function resetCamera() {
+    viewerRef.current?.camera.flyTo({
+      destination: Cartesian3.fromDegrees(-20, 24, 19_000_000),
+      duration: 0.8
+    });
+    scheduleRefresh(180);
   }
 
   async function saveWorkspace() {
@@ -787,15 +840,22 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="panel left-panel">
+      <aside className={`panel left-panel ${leftPanelCollapsed ? "collapsed" : ""}`}>
         <div className="panel-header">
           <div>
             <p className="eyebrow">Eagle Eye</p>
             <h1>v2 Intelligence Desk</h1>
           </div>
-          <span className={`pill ${socketOnline ? "online" : ""}`}>{socketOnline ? "Live bus" : "Offline"}</span>
+          <div className="panel-header-actions">
+            <span className={`pill ${socketOnline ? "online" : ""}`}>{socketOnline ? "Live bus" : "Offline"}</span>
+            <button className="collapse-toggle" onClick={() => setLeftPanelCollapsed((value) => !value)}>
+              {leftPanelCollapsed ? ">" : "<"}
+            </button>
+          </div>
         </div>
 
+        {!leftPanelCollapsed ? (
+          <>
         <section className="card">
           <h2>Sources</h2>
           <p className="muted">Database-first viewport rendering. Globe only requests what the camera can see.</p>
@@ -896,6 +956,14 @@ function App() {
             ))}
           </div>
         </section>
+          </>
+        ) : (
+          <div className="collapsed-rail">
+            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Sources</button>
+            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Layers</button>
+            <button className="rail-chip" onClick={() => setLeftPanelCollapsed(false)}>Intel</button>
+          </div>
+        )}
       </aside>
 
       <main className="globe-stage">
@@ -939,6 +1007,24 @@ function App() {
             </div>
           </div>
         ) : null}
+        <div className="camera-dock">
+          <button className="camera-btn wide" onClick={resetCamera}>Home</button>
+          <div className="camera-grid">
+            <button className="camera-btn" onClick={() => tiltCamera("up")}>Tilt+</button>
+            <button className="camera-btn" onClick={() => moveCamera("up")}>Pan↑</button>
+            <button className="camera-btn" onClick={() => zoomCamera("in")}>Zoom+</button>
+            <button className="camera-btn" onClick={() => rotateCamera("left")}>Rot←</button>
+            <button className="camera-btn" onClick={() => resetCamera()}>•</button>
+            <button className="camera-btn" onClick={() => rotateCamera("right")}>Rot→</button>
+            <button className="camera-btn" onClick={() => moveCamera("left")}>Pan←</button>
+            <button className="camera-btn" onClick={() => moveCamera("down")}>Pan↓</button>
+            <button className="camera-btn" onClick={() => moveCamera("right")}>Pan→</button>
+          </div>
+          <div className="camera-row">
+            <button className="camera-btn" onClick={() => tiltCamera("down")}>Tilt-</button>
+            <button className="camera-btn" onClick={() => zoomCamera("out")}>Zoom-</button>
+          </div>
+        </div>
         <div className="floating-actions">
           <button onClick={() => setFollowSelected((value) => !value)}>{followSelected ? "Unfollow" : "Follow"}</button>
           <button onClick={createQuickCase}>Create case</button>
@@ -950,9 +1036,10 @@ function App() {
         </div>
       </main>
 
-      <aside className="panel right-panel">
+      <aside className={`panel right-panel ${rightPanelCollapsed ? "collapsed" : ""}`}>
         <section className="card">
-          <div className="tab-row">
+          <div className="section-row">
+            <div className="tab-row">
             {(["selection", "events", "relationships", "investigation"] as RightTab[]).map((tab) => (
               <button
                 key={tab}
@@ -962,9 +1049,15 @@ function App() {
                 {tab}
               </button>
             ))}
+            </div>
+            <button className="collapse-toggle" onClick={() => setRightPanelCollapsed((value) => !value)}>
+              {rightPanelCollapsed ? "<" : ">"}
+            </button>
           </div>
         </section>
 
+        {!rightPanelCollapsed ? (
+          <>
         {activeRightTab === "selection" ? (
         <section className="card">
           <div className="section-row">
@@ -1127,6 +1220,13 @@ function App() {
             <strong>{aois.length}</strong>
           </div>
         </section>
+          </>
+        ) : (
+          <div className="collapsed-rail right">
+            <button className="rail-chip" onClick={() => setRightPanelCollapsed(false)}>Select</button>
+            <button className="rail-chip" onClick={() => setRightPanelCollapsed(false)}>Events</button>
+          </div>
+        )}
       </aside>
 
       <footer className="timeline-bar">

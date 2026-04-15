@@ -40,11 +40,9 @@ select {
 
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: 320px 1fr 360px;
-  grid-template-rows: 1fr 120px;
-  gap: 14px;
+  position: relative;
   padding: 14px;
+  overflow: hidden;
 }
 
 .panel {
@@ -61,15 +59,37 @@ select {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  position: fixed;
+  top: 14px;
+  bottom: 132px;
+  z-index: 4;
+  max-width: calc(100vw - 28px);
+}
+
+.left-panel {
+  left: 14px;
+  width: 320px;
+}
+
+.right-panel {
+  right: 14px;
+  width: 340px;
+}
+
+.left-panel.collapsed,
+.right-panel.collapsed {
+  width: 88px;
+  padding: 12px;
 }
 
 .globe-stage {
-  position: relative;
-  min-height: 0;
+  position: fixed;
+  inset: 14px 14px 132px 14px;
   border-radius: 28px;
   overflow: hidden;
   border: 1px solid var(--border);
   background: #050b11;
+  z-index: 0;
 }
 
 .globe-canvas {
@@ -144,9 +164,9 @@ select {
 .top-strip {
   position: absolute;
   top: 18px;
-  left: 18px;
-  right: 18px;
-  z-index: 2;
+  left: 118px;
+  right: 118px;
+  z-index: 3;
   display: flex;
   justify-content: space-between;
   gap: 14px;
@@ -187,11 +207,50 @@ select {
 
 .floating-actions {
   position: absolute;
-  left: 18px;
+  left: 50%;
   bottom: 18px;
-  z-index: 2;
+  transform: translateX(-50%);
+  z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.camera-dock {
+  position: absolute;
+  right: 18px;
+  bottom: 92px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(8, 14, 22, 0.78);
+  border: 1px solid rgba(230, 238, 245, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 56px);
+  gap: 8px;
+}
+
+.camera-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.camera-btn {
+  min-height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.camera-btn.wide {
+  width: 100%;
 }
 
 .card {
@@ -213,8 +272,37 @@ select {
   gap: 12px;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.collapse-toggle {
+  min-width: 42px;
+}
+
+.collapsed-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.rail-chip {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  min-height: 84px;
+  padding: 10px 8px;
+}
+
 .timeline-bar {
-  grid-column: 1 / -1;
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  width: min(1040px, calc(100vw - 28px));
+  z-index: 5;
   background: linear-gradient(180deg, rgba(10, 17, 25, 0.96), rgba(8, 14, 22, 0.98));
   border: 1px solid var(--border);
   border-radius: 24px;
@@ -314,6 +402,8 @@ h3 {
 .tab-active {
   background: rgba(255, 213, 74, 0.16);
   border-color: rgba(255, 213, 74, 0.35);
+  color: #fff2aa;
+  box-shadow: inset 0 0 0 1px rgba(255, 213, 74, 0.16);
 }
 
 .layer-chip,
@@ -351,7 +441,9 @@ button {
 }
 
 .layer-chip.active {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 213, 74, 0.14);
+  border-color: rgba(255, 213, 74, 0.32);
+  color: #fff2aa;
 }
 
 .stack-list {

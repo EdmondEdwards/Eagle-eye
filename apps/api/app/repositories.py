@@ -664,7 +664,7 @@ def satellite_fov(satellite_id: str, at: datetime | None = None) -> dict[str, An
 
 
 def query_view(view: GlobeViewState) -> dict[str, Any]:
-    timestamp = _utc(view.timestamp)
+    timestamp = _utc() if view.mode == "live" else _utc(view.timestamp)
     entities: list[dict[str, Any]] = []
     clusters: list[dict[str, Any]] = []
     try:
