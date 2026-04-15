@@ -248,7 +248,11 @@ function App() {
       liveEvents
     ] = results;
 
-    if (workspaceRows.status === "fulfilled") setWorkspaces(workspaceRows.value);
+    if (workspaceRows.status === "fulfilled") {
+      setWorkspaces(workspaceRows.value);
+    } else {
+      setWorkspaces([]);
+    }
     if (watchlistRows.status === "fulfilled") setWatchlists(watchlistRows.value);
     if (sourceRows.status === "fulfilled") setSourceStatus(sourceRows.value);
     if (caseRows.status === "fulfilled") setCases(caseRows.value);
@@ -258,11 +262,13 @@ function App() {
     if (liveEvents.status === "fulfilled") setRecentEvents(liveEvents.value);
 
     const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .filter((result, index): result is PromiseRejectedResult => result.status === "rejected" && index !== 0)
       .map((result) => String(result.reason));
 
     if (failures.length > 0) {
       setStatusText(`Partial backend mismatch: ${failures[0]}`);
+    } else if (workspaceRows.status === "rejected") {
+      setStatusText("Workspace sync unavailable. Core traffic data is live.");
     }
   }
 
