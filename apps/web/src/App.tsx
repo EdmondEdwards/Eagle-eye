@@ -87,7 +87,7 @@ function buildViewState(
     pitch: CesiumMath.toDegrees(viewer.camera.pitch),
     roll: CesiumMath.toDegrees(viewer.camera.roll),
     timestamp: timeState.current_timestamp,
-    mode: modeOverride ?? (timeState.mode === "simulate" ? "simulate" : timeState.mode === "replay" || timeState.mode === "paused" ? "replay" : "live"),
+    mode: modeOverride ?? (timeState.mode === "simulate" ? "simulate" : timeState.mode === "replay" ? "replay" : "live"),
     enabled_layers: Object.entries(layers)
       .filter(([, enabled]) => enabled)
       .map(([key]) => key),
@@ -293,34 +293,15 @@ function App() {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => {
       if (!viewerRef.current || !timeState || refreshInFlightRef.current) return;
-      const requestedMode = timeState.mode === "live" ? "live" : "replay";
+      const requestedMode = timeState.mode === "replay" ? "replay" : "live";
       const payload = buildViewState(viewerRef.current, timeState, layers, selectedEntity ? [selectedEntity.id] : [], requestedMode);
       if (!payload) return;
       refreshInFlightRef.current = true;
       setIsViewLoading(true);
       api
         .queryView(payload)
-        .then(async (response) => {
+        .then((response) => {
           const isEmpty = response.entities.length === 0 && response.events.length === 0 && response.clusters.length === 0;
-          if (isEmpty && requestedMode === "live" && timeState.current_timestamp) {
-            const replayPayload = { ...payload, mode: "replay" as const, timestamp: timeState.current_timestamp };
-            try {
-              const replayResponse = await api.queryView(replayPayload);
-              const replayHasData = replayResponse.entities.length > 0 || replayResponse.events.length > 0 || replayResponse.clusters.length > 0;
-              if (replayHasData) {
-                startTransition(() => {
-                  setEffectiveViewMode("replay");
-                  setViewData(replayResponse);
-                  setStatusText(
-                    `No fresh live rows; showing replay snapshot with ${replayResponse.entities.length} tracks and ${replayResponse.events.length} events`
-                  );
-                });
-                return;
-              }
-            } catch {
-              // Keep the live response if replay fallback also fails.
-            }
-          }
           startTransition(() => {
             setEffectiveViewMode(requestedMode);
             setViewData(response);
