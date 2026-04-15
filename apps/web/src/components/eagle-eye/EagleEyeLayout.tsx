@@ -1,4 +1,3 @@
-import type { RefObject } from "react";
 import type { EntityRecord, EventRecord, InvestigationBundle, SatelliteFovResponse } from "@eagle-eye/shared-types";
 import { GlobeViewport } from "./GlobeViewport";
 import { SelectedObjectPanel } from "./SelectedObjectPanel";
@@ -7,7 +6,7 @@ import { TopHeader } from "./TopHeader";
 import { TrackSidebar } from "./TrackSidebar";
 
 type EagleEyeLayoutProps = {
-  globeRef: RefObject<HTMLDivElement | null>;
+  setGlobeRef: (node: HTMLDivElement | null) => void;
   isLive: boolean;
   utcDisplay: string;
   searchValue: string;
@@ -46,7 +45,7 @@ export function EagleEyeLayout(props: EagleEyeLayoutProps) {
 
         <div className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_320px] gap-3">
           <TrackSidebar trackCounts={props.trackCounts} filterValues={props.filterValues} />
-          <GlobeViewport globeRef={props.globeRef} loading={props.loading} statusText={props.statusText} />
+          <GlobeViewport setGlobeRef={props.setGlobeRef} loading={props.loading} statusText={props.statusText} />
           <SelectedObjectPanel
             selectedTitle={props.selectedTitle}
             selectedEntity={props.selectedEntity}

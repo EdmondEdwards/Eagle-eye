@@ -583,7 +583,9 @@ function App() {
 
   return (
     <EagleEyeLayout
-      globeRef={globeRef}
+      setGlobeRef={(node) => {
+        globeRef.current = node;
+      }}
       isLive={socketOnline}
       utcDisplay={formatUtcDateTime(timeState?.current_timestamp)}
       searchValue={searchValue}

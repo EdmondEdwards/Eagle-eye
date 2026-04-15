@@ -1,17 +1,15 @@
-import type { RefObject } from "react";
-
 type GlobeViewportProps = {
-  globeRef: RefObject<HTMLDivElement | null>;
+  setGlobeRef: (node: HTMLDivElement | null) => void;
   loading: boolean;
   statusText: string;
 };
 
-export function GlobeViewport({ globeRef, loading, statusText }: GlobeViewportProps) {
+export function GlobeViewport({ setGlobeRef, loading, statusText }: GlobeViewportProps) {
   return (
     <section className="panel-surface relative min-w-0 flex-1 overflow-hidden p-0">
       <div className="absolute inset-[18px] overflow-hidden rounded-[6px] border border-white/8">
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,16,0.4),rgba(2,6,13,0.4))]" />
-        <div ref={globeRef} className="globe-host absolute inset-0" />
+        <div ref={setGlobeRef} className="globe-host absolute inset-0" />
         <div className="pointer-events-none absolute inset-0 viewport-grid opacity-15" />
         {loading ? (
           <div className="absolute left-4 top-4 rounded-[6px] border border-white/10 bg-black/45 px-3 py-2 text-[12px] tracking-[0.14em] text-[#a9c1d6]">
