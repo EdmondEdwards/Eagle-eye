@@ -94,7 +94,7 @@ function zoomValueToCameraHeight(value: number): number {
 
 function viewModeFromTime(mode: TimeState["mode"]): GlobeViewState["mode"] {
   if (mode === "simulate") return "simulate";
-  if (mode === "replay" || mode === "paused") return "replay";
+  if (mode === "replay") return "replay";
   return "live";
 }
 

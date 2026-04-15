@@ -251,8 +251,20 @@ def _entity_rows(table: str, entity_kind: str, timestamp: datetime, view: GlobeV
         lon_col = "computed_lon"
         alt_col = "computed_alt_km"
         speed_col = "computed_velocity_kms"
+    elif entity_kind == "aircraft":
+        label = "COALESCE(callsign, icao24, id)"
+        lat_col = "ST_Y(geom)"
+        lon_col = "ST_X(geom)"
+        alt_col = "altitude_m"
+        speed_col = "velocity_kts"
+    elif entity_kind == "vessel":
+        label = "COALESCE(vessel_name, callsign, mmsi, imo, id)"
+        lat_col = "ST_Y(geom)"
+        lon_col = "ST_X(geom)"
+        alt_col = "0"
+        speed_col = "speed_kts"
     else:
-        label = "COALESCE(callsign, vessel_name, name, icao24, mmsi, norad_cat_id, id)"
+        label = "id"
         lat_col = "ST_Y(geom)"
         lon_col = "ST_X(geom)"
         alt_col = "altitude_m"
